@@ -40,11 +40,9 @@ static volatile bool s_running = true;
 /* daemon / display state */
 static bool g_daemon_mode = false;
 static char g_pid_file_path[PATH_MAX] = {0};
-static int  g_display_startup = -1;  /* -1=use config, 0=off, 1=on */
 
 /* display_sdl2.c extensions (not in display_hal.h) */
 extern bool display_hal_is_active(void);
-extern bool display_hal_quit_requested(void);
 
 /* ---- helpers ---- */
 
@@ -354,48 +352,6 @@ static void daemonize(const char *log_path)
     esp_log_set_log_file(log_path);
 }
 
-/* ---- display CLI command ---- */
-
-static int cmd_display(int argc, char **argv)
-{
-    if (argc < 2) {
-        printf("Usage: display <on|off|status>\r\n");
-        return 1;
-    }
-
-    if (strcmp(argv[1], "on") == 0) {
-        if (display_hal_is_active()) {
-            printf("Display is already active.\r\n");
-            return 0;
-        }
-        esp_err_t err = display_hal_create(NULL, NULL, 0, 320, 240);
-        if (err == ESP_OK) {
-            printf("Display enabled.\r\n");
-        } else {
-            printf("Failed to enable display: %s\r\n", esp_err_to_name(err));
-            return 1;
-        }
-    } else if (strcmp(argv[1], "off") == 0) {
-        if (!display_hal_is_active()) {
-            printf("Display is already inactive.\r\n");
-            return 0;
-        }
-        esp_err_t err = display_hal_destroy();
-        if (err == ESP_OK) {
-            printf("Display disabled.\r\n");
-        } else {
-            printf("Failed to disable display: %s\r\n", esp_err_to_name(err));
-            return 1;
-        }
-    } else if (strcmp(argv[1], "status") == 0) {
-        printf("Display: %s\r\n", display_hal_is_active() ? "active" : "inactive");
-    } else {
-        printf("Usage: display <on|off|status>\r\n");
-        return 1;
-    }
-    return 0;
-}
-
 static void print_usage(const char *prog)
 {
     printf("Usage: %s [OPTIONS]\n", prog);
@@ -405,8 +361,6 @@ static void print_usage(const char *prog)
     printf("  --pid-file <path>    Write PID to file (used with --daemon)\n");
     printf("  --daemon             Run as background daemon\n");
     printf("  --foreground         Run in foreground (default, overrides --daemon)\n");
-    printf("  --display            Enable SDL2 display window\n");
-    printf("  --no-display         Disable SDL2 display window\n");
     printf("  --version            Print version and exit\n");
     printf("  --help               Show this help message\n");
 }
@@ -437,14 +391,6 @@ int main(int argc, char **argv)
         }
         if (strcmp(argv[i], "--foreground") == 0) {
             g_daemon_mode = false;
-            continue;
-        }
-        if (strcmp(argv[i], "--display") == 0) {
-            g_display_startup = 1;
-            continue;
-        }
-        if (strcmp(argv[i], "--no-display") == 0) {
-            g_display_startup = 0;
             continue;
         }
         if (strcmp(argv[i], "--pid-file") == 0) {
@@ -723,10 +669,6 @@ int main(int argc, char **argv)
     if (!config.llm_max_tokens[0])
         strncpy(config.llm_max_tokens, "4096", sizeof(config.llm_max_tokens) - 1);
 
-    /* CLI flag overrides config for display */
-    if (g_display_startup == 1) display_enabled = true;
-    if (g_display_startup == 0) display_enabled = false;
-
     ESP_LOGI(TAG, "Data directory: %s", abs_data_dir);
     ESP_LOGI(TAG, "Log file: %s", log_path);
 
@@ -793,17 +735,6 @@ int main(int argc, char **argv)
             display_hal_present();
             display_hal_end_frame();
         }
-    }
-
-    /* Register display control command */
-    {
-        const esp_console_cmd_t display_cmd = {
-            .command = "display",
-            .help    = "Control simulated LCD display (on|off|status)",
-            .hint    = "<on|off|status>",
-            .func    = cmd_display,
-        };
-        esp_console_cmd_register(&display_cmd);
     }
 
     ESP_LOGI(TAG, "Desktop simulator running. Press Ctrl+C to stop.");

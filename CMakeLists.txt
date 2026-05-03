@@ -7,6 +7,7 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 # ---- Dependencies ----
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SDL2    REQUIRED sdl2)
+pkg_check_modules(SDL2_TTF REQUIRED SDL2_ttf)
 pkg_check_modules(CURL    REQUIRED libcurl)
 pkg_check_modules(LUA     REQUIRED lua5.4)
 pkg_check_modules(JSONC   REQUIRED json-c)
@@ -298,6 +299,7 @@ target_include_directories(esp-claw-desktop PRIVATE
     ${COMMON_INCLUDES}
     ${LUA_INCLUDE_DIRS}
     ${SDL2_INCLUDE_DIRS}
+    ${SDL2_TTF_INCLUDE_DIRS}
     ${CURL_INCLUDE_DIRS}
     ${JSONC_INCLUDE_DIRS}
     ${CMAKE_SOURCE_DIR}/components/include
@@ -308,6 +310,7 @@ target_link_libraries(esp-claw-desktop PRIVATE
     ${CURL_LIBRARIES}
     ${LUA_LIBRARIES}
     ${SDL2_LIBRARIES}
+    ${SDL2_TTF_LIBRARIES}
     ${JSONC_LIBRARIES}
     png16
     pthread
@@ -322,6 +325,7 @@ target_compile_options(esp-claw-desktop PRIVATE
     ${CURL_CFLAGS_OTHER}
     ${LUA_CFLAGS_OTHER}
     ${SDL2_CFLAGS_OTHER}
+    ${SDL2_TTF_CFLAGS_OTHER}
     ${JSONC_CFLAGS_OTHER}
 )
 
@@ -333,6 +337,7 @@ target_include_directories(esp-claw-desktop SYSTEM BEFORE PRIVATE ${SIM_INC_DIR}
 
 message(STATUS "=== esp-claw Desktop Simulator Build ===")
 message(STATUS "  SDL2:    ${SDL2_LIBRARIES}")
+message(STATUS "  SDL2_ttf:${SDL2_TTF_LIBRARIES}")
 message(STATUS "  CURL:    ${CURL_LIBRARIES}")
 message(STATUS "  Lua:     ${LUA_LIBRARIES}")
 message(STATUS "  JSON-C:  ${JSONC_LIBRARIES}")

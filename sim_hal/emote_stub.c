@@ -247,7 +247,7 @@ static esp_err_t emote_init_internal(void)
        with EMOTE as default, but we explicitly acquire to be safe). */
     display_arbiter_acquire(DISPLAY_ARBITER_OWNER_EMOTE);
 
-    return emote_set_network_status(false, NULL);
+    return emote_set_network_status(true, NULL);
 }
 
 esp_err_t emote_start(void)

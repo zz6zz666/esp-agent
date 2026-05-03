@@ -65,14 +65,22 @@ find_binary() {
 }
 
 # ---- internal: send a command to the agent socket ----
+# Agent internal LLM timeout is 130 s; we add 10 s headroom for queue /
+# cleanup so the client never out-waits the server.
 
 _agent_send() {
     local cmd="$1"
+    local timeout_sec="${2:-140}"
     if ! is_running; then
         die "Agent is not running. Start it first: esp-agent start"
     fi
     [ -S "$SOCK_PATH" ] || die "Socket not found at $SOCK_PATH."
-    printf '%s\n' "$cmd" | nc -U -N "$SOCK_PATH" 2>/dev/null
+    printf '%s\n' "$cmd" | timeout "$timeout_sec" nc -U -N "$SOCK_PATH" 2>/dev/null
+    local rc=$?
+    if [ $rc -eq 124 ]; then
+        die "Command timed out after ${timeout_sec}s — agent may be stuck or LLM call is too slow"
+    fi
+    return $rc
 }
 
 # ---- subcommands ----
@@ -387,7 +395,6 @@ cmd_start() {
     fi
 
     local foreground_mode=""
-    local display_opt=""
     local data_dir_opt=""
 
     # Parse flags
@@ -395,12 +402,6 @@ cmd_start() {
         case "$1" in
             --foreground)
                 foreground_mode="1"
-                shift ;;
-            --display)
-                display_opt="--display"
-                shift ;;
-            --no-display)
-                display_opt="--no-display"
                 shift ;;
             --data-dir)
                 shift
@@ -444,7 +445,7 @@ cmd_start() {
         echo ""
         ESP_AGENT_DATA_DIR="$AGENT_DIR" "$BIN" \
             --pid-file "$PID_FILE" \
-            $data_dir_opt $display_opt &
+            $data_dir_opt &
         local pid=$!
         echo "$pid" > "$PID_FILE"
         wait "$pid" 2>/dev/null || true
@@ -454,7 +455,7 @@ cmd_start() {
         ESP_AGENT_DATA_DIR="$AGENT_DIR" "$BIN" \
             --daemon \
             --pid-file "$PID_FILE" \
-            $data_dir_opt $display_opt &
+            $data_dir_opt &
         local pid=$!
 
         # Wait for PID file to be written by daemon
@@ -592,11 +593,9 @@ cmd_help() {
     echo "Usage: esp-agent <command> [args...]"
     echo ""
     echo "Management commands:"
-    echo "  config       Full setup wizard (LLM, channels, search keys, display)"
+    echo "  config       Full setup wizard (LLM, channels, search, display)"
     echo "  start        Start the agent as a background daemon (auto-tails logs)"
     echo "               --foreground    Run in foreground (logs to terminal)"
-    echo "               --display       Enable SDL2 display window"
-    echo "               --no-display    Disable SDL2 display window"
     echo "               --data-dir DIR  Custom data directory"
     echo "  stop         Stop the agent service"
     echo "  restart      Stop then start the agent service"
@@ -612,7 +611,6 @@ cmd_help() {
     echo "Examples:"
     echo "  esp-agent ask \"Hello, what can you do?\""
     echo "  esp-agent session"
-    echo "  esp-agent display on"
     echo "  esp-agent lua --list"
     echo "  esp-agent esp-claw help"
     echo ""
