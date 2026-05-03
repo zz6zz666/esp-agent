@@ -1,0 +1,656 @@
+#!/usr/bin/env bash
+#
+# esp-agent — CLI tool for the esp-claw desktop agent
+#
+# Management commands (handled locally):
+#   esp-agent config             First-time setup wizard
+#   esp-agent start              Start the agent service (daemon mode, auto-tails logs)
+#   esp-agent stop               Stop the agent service
+#   esp-agent restart            Stop then start the agent service
+#   esp-agent status             Check if the agent is running
+#   esp-agent logs               Tail the agent log file
+#   esp-agent service enable     Enable systemd user service
+#   esp-agent service disable    Disable systemd user service
+#   esp-agent service start      Start via systemd
+#   esp-agent service stop       Stop via systemd
+#   esp-agent service status     Status via systemd
+#   esp-agent build              Build the agent binary
+#   esp-agent clean              Remove build artifacts
+#   esp-agent --version          Print version
+#
+# Explicit REPL passthrough:
+#   esp-agent esp-claw <cmd...>  Forward <cmd...> to the agent REPL
+#
+# Everything else is forwarded directly to the agent's built-in CLI
+# over the Unix socket.  Examples:
+#   esp-agent ask "Hello"
+#   esp-agent session
+#   esp-agent lua --list
+#   esp-agent display on
+#
+# Data directory: ~/.esp-agent/
+# Socket:          ~/.esp-agent/agent.sock
+# PID file:        ~/.esp-agent/agent.pid
+
+set -euo pipefail
+
+VERSION="1.0.0"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+BUILD_DIR="${SCRIPT_DIR}/build"
+AGENT_DIR="${HOME}/.esp-agent"
+SOCK_PATH="${AGENT_DIR}/agent.sock"
+PID_FILE="${AGENT_DIR}/agent.pid"
+CONFIG_FILE="${AGENT_DIR}/config.json"
+LOG_FILE="${AGENT_DIR}/agent.log"
+
+# ---- helpers ----
+
+die() { echo "ERROR: $*" >&2; exit 1; }
+
+is_running() {
+    [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null
+}
+
+find_binary() {
+    # Local build first (dev), then installed path
+    if [ -x "${SCRIPT_DIR}/build/esp-claw-desktop" ]; then
+        echo "${SCRIPT_DIR}/build/esp-claw-desktop"
+    elif [ -x "/usr/bin/esp-claw-desktop" ]; then
+        echo "/usr/bin/esp-claw-desktop"
+    elif command -v esp-claw-desktop >/dev/null 2>&1; then
+        command -v esp-claw-desktop
+    else
+        die "Binary not found. Run './esp-agent build' or install the package."
+    fi
+}
+
+# ---- internal: send a command to the agent socket ----
+
+_agent_send() {
+    local cmd="$1"
+    if ! is_running; then
+        die "Agent is not running. Start it first: esp-agent start"
+    fi
+    [ -S "$SOCK_PATH" ] || die "Socket not found at $SOCK_PATH."
+    printf '%s\n' "$cmd" | nc -U -N "$SOCK_PATH" 2>/dev/null
+}
+
+# ---- subcommands ----
+
+cmd_config() {
+    echo "========================================"
+    echo "  esp-agent Configuration Wizard"
+    echo "========================================"
+    echo ""
+    echo "This wizard will create ${CONFIG_FILE}"
+    echo "Press Enter to accept default values (shown in brackets)."
+    echo ""
+
+    # ============================================================
+    # Section 1 — LLM Model Provider
+    # ============================================================
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  1. LLM Model Provider"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "  Select a provider by number:"
+    echo ""
+    echo "  ── Preset providers (fixed URLs) ──"
+    echo "  1. DeepSeek          (Anthropic)   deepseek-v4-flash"
+    echo "  2. 阿里云百炼         (OpenAI)      qwen3.6-flash"
+    echo "  3. 阿里云百炼 Coding   (Anthropic)   qwen3.6-plus"
+    echo "  4. 火山引擎            (OpenAI)      doubao-seed-2-0-lite-260215"
+    echo "  5. 火山引擎 Coding     (Anthropic)   doubao-seed-2.0-pro"
+    echo "  6. MiniMax            (Anthropic)   MiniMax-M2.7"
+    echo ""
+    echo "  ── Custom providers ──"
+    echo "  7. OpenAI              (OpenAI)      gpt-4o"
+    echo "  8. OpenAI Compatible   (OpenAI)      custom URL"
+    echo "  9. Anthropic           (Anthropic)   claude-sonnet-4-20250514"
+    echo " 10. Anthropic Compatible(Anthropic)   custom URL"
+    echo ""
+
+    local provider_choice=""
+    read -r -p "Provider number [7]: " provider_choice
+    provider_choice="${provider_choice:-7}"
+
+    # Map choice to profile and base_url
+    local profile=""
+    local base_url=""
+    local default_model=""
+    local ask_url="false"
+
+    case "$provider_choice" in
+        1)  # DeepSeek
+            profile="anthropic"
+            base_url="https://api.deepseek.com/anthropic"
+            default_model="deepseek-v4-flash"
+            ;;
+        2)  # 阿里云百炼
+            profile="custom_openai_compatible"
+            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
+            default_model="qwen3.6-flash"
+            ;;
+        3)  # 阿里云百炼 Coding
+            profile="anthropic"
+            base_url="https://coding.dashscope.aliyuncs.com/apps/anthropic"
+            default_model="qwen3.6-plus"
+            ;;
+        4)  # 火山引擎
+            profile="custom_openai_compatible"
+            base_url="https://ark.cn-beijing.volces.com/api/v3"
+            default_model="doubao-seed-2-0-lite-260215"
+            ;;
+        5)  # 火山引擎 Coding
+            profile="anthropic"
+            base_url="https://ark.cn-beijing.volces.com/api/coding"
+            default_model="doubao-seed-2.0-pro"
+            ;;
+        6)  # MiniMax
+            profile="anthropic"
+            base_url="https://api.minimaxi.com/anthropic"
+            default_model="MiniMax-M2.7"
+            ;;
+        7)  # OpenAI (standard)
+            profile="openai"
+            base_url=""
+            default_model="gpt-4o"
+            ;;
+        8)  # OpenAI Compatible (custom URL)
+            profile="custom_openai_compatible"
+            base_url=""
+            default_model="gpt-4o"
+            ask_url="true"
+            ;;
+        9)  # Anthropic (standard)
+            profile="anthropic"
+            base_url=""
+            default_model="claude-sonnet-4-20250514"
+            ;;
+        10) # Anthropic Compatible (custom URL)
+            profile="anthropic"
+            base_url=""
+            default_model="claude-sonnet-4-20250514"
+            ask_url="true"
+            ;;
+        *)
+            echo "Invalid choice, defaulting to OpenAI."
+            profile="openai"
+            base_url=""
+            default_model="gpt-4o"
+            ;;
+    esac
+
+    echo ""
+
+    # API key
+    read -r -p "LLM API key [${LLM_API_KEY:-(none)}]: " input_api_key
+
+    # Model
+    read -r -p "LLM model [${default_model}]: " input_model
+
+    # Custom URL (only for compatible types)
+    if [ "$ask_url" = "true" ]; then
+        read -r -p "LLM base URL (required): " input_base_url
+    else
+        input_base_url=""
+    fi
+
+    local api_key="${input_api_key:-${LLM_API_KEY:-}}"
+    local model="${input_model:-${default_model}}"
+
+    # For custom options with no user URL, prompt was skipped; keep empty
+    # For presets, use the hardcoded base_url
+    if [ -z "$input_base_url" ] && [ -n "$base_url" ]; then
+        input_base_url="$base_url"
+    fi
+
+    echo ""
+
+    # ============================================================
+    # Section 2 — IM Channels
+    # ============================================================
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  2. IM Channels (消息渠道接入)"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "  The agent can receive and reply to messages through"
+    echo "  various IM platforms. Select which channels to enable."
+    echo "  You will be prompted for credentials for each enabled channel."
+    echo ""
+
+    # --- Local IM (always available, no credentials) ---
+    echo "  [Local IM / Web Chat] — Built-in web-based IM, always available."
+    local_im_enabled="true"
+
+    # --- QQ ---
+    read -r -p "Enable QQ Bot? (y/n) [n]: " qq_enable
+    qq_enabled="false"
+    qq_app_id=""
+    qq_app_secret=""
+    if [ "$qq_enable" = "y" ] || [ "$qq_enable" = "Y" ]; then
+        qq_enabled="true"
+        echo "  QQ Bot requires App ID + App Secret from https://q.qq.com"
+        read -r -p "  QQ App ID: " qq_app_id
+        read -r -p "  QQ App Secret: " qq_app_secret
+    fi
+
+    # --- Telegram ---
+    read -r -p "Enable Telegram Bot? (y/n) [n]: " tg_enable
+    tg_enabled="false"
+    tg_bot_token=""
+    if [ "$tg_enable" = "y" ] || [ "$tg_enable" = "Y" ]; then
+        tg_enabled="true"
+        echo "  Telegram Bot requires a Bot Token from @BotFather"
+        read -r -p "  Bot Token: " tg_bot_token
+    fi
+
+    # --- Feishu / Lark ---
+    read -r -p "Enable Feishu/Lark? (y/n) [n]: " feishu_enable
+    feishu_enabled="false"
+    feishu_app_id=""
+    feishu_app_secret=""
+    if [ "$feishu_enable" = "y" ] || [ "$feishu_enable" = "Y" ]; then
+        feishu_enabled="true"
+        echo "  Feishu/Lark requires App ID + App Secret from Feishu Open Platform"
+        read -r -p "  App ID: " feishu_app_id
+        read -r -p "  App Secret: " feishu_app_secret
+    fi
+
+    # --- WeChat ---
+    read -r -p "Enable WeChat (微信)? (y/n) [n]: " wechat_enable
+    wechat_enabled="false"
+    wechat_token=""
+    wechat_base_url=""
+    wechat_cdn_url=""
+    wechat_account_id=""
+    if [ "$wechat_enable" = "y" ] || [ "$wechat_enable" = "Y" ]; then
+        wechat_enabled="true"
+        echo "  WeChat requires a token and account configuration"
+        read -r -p "  Token: " wechat_token
+        read -r -p "  Base URL [https://ilinkai.weixin.qq.com]: " wechat_base_url
+        wechat_base_url="${wechat_base_url:-https://ilinkai.weixin.qq.com}"
+        read -r -p "  CDN Base URL [https://novac2c.cdn.weixin.qq.com/c2c]: " wechat_cdn_url
+        wechat_cdn_url="${wechat_cdn_url:-https://novac2c.cdn.weixin.qq.com/c2c}"
+        read -r -p "  Account ID [default]: " wechat_account_id
+        wechat_account_id="${wechat_account_id:-default}"
+    fi
+
+    echo ""
+
+    # ============================================================
+    # Section 3 — Web Search (optional)
+    # ============================================================
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  3. Web Search (optional)"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "  API keys for web search providers (optional)."
+    echo "  Leave empty to skip."
+    echo ""
+
+    read -r -p "Brave Search API key [(none)]: " search_brave_key
+    search_brave_key="${search_brave_key:-}"
+    read -r -p "Tavily Search API key [(none)]: " search_tavily_key
+    search_tavily_key="${search_tavily_key:-}"
+
+    echo ""
+
+    # ============================================================
+    # Section 4 — Display
+    # ============================================================
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  4. Display"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+
+    read -r -p "Enable simulated LCD display window? (y/n) [y]: " input_display
+    display_enabled="true"
+    [ "$input_display" = "n" ] || [ "$input_display" = "N" ] && display_enabled="false"
+
+    echo ""
+
+    # ============================================================
+    # Build config.json
+    # ============================================================
+    mkdir -p "$AGENT_DIR"
+
+    cat > "$CONFIG_FILE" << EOF
+{
+  "llm": {
+    "api_key": "${api_key}",
+    "model": "${model}",
+    "profile": "${profile}",
+    "base_url": "${input_base_url}",
+    "auth_type": "",
+    "timeout_ms": "120000",
+    "max_tokens": "8192"
+  },
+  "channels": {
+    "local_im": {
+      "enabled": ${local_im_enabled}
+    },
+    "qq": {
+      "enabled": ${qq_enabled},
+      "app_id": "${qq_app_id}",
+      "app_secret": "${qq_app_secret}"
+    },
+    "telegram": {
+      "enabled": ${tg_enabled},
+      "bot_token": "${tg_bot_token}"
+    },
+    "feishu": {
+      "enabled": ${feishu_enabled},
+      "app_id": "${feishu_app_id}",
+      "app_secret": "${feishu_app_secret}"
+    },
+    "wechat": {
+      "enabled": ${wechat_enabled},
+      "token": "${wechat_token}",
+      "base_url": "${wechat_base_url}",
+      "cdn_base_url": "${wechat_cdn_url}",
+      "account_id": "${wechat_account_id}"
+    }
+  },
+  "search": {
+    "brave_key": "${search_brave_key}",
+    "tavily_key": "${search_tavily_key}"
+  },
+  "display": {
+    "enabled": ${display_enabled}
+  }
+}
+EOF
+
+    echo ""
+    echo "========================================"
+    echo "  Configuration complete!"
+    echo "========================================"
+    echo ""
+    echo "Config saved to: ${CONFIG_FILE}"
+    echo ""
+    echo "Summary:"
+    echo "  LLM:        ${profile} / ${model}"
+    echo "  Local IM:   enabled (always on)"
+    echo "  QQ:         ${qq_enabled}"
+    echo "  Telegram:   ${tg_enabled}"
+    echo "  Feishu:     ${feishu_enabled}"
+    echo "  WeChat:     ${wechat_enabled}"
+    echo "  Display:    ${display_enabled}"
+    echo ""
+    echo "Run 'esp-agent start' to launch the agent."
+}
+
+cmd_start() {
+    if is_running; then
+        die "Agent is already running (PID $(cat "$PID_FILE")). Use 'esp-agent stop' first."
+    fi
+
+    local foreground_mode=""
+    local display_opt=""
+    local data_dir_opt=""
+
+    # Parse flags
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --foreground)
+                foreground_mode="1"
+                shift ;;
+            --display)
+                display_opt="--display"
+                shift ;;
+            --no-display)
+                display_opt="--no-display"
+                shift ;;
+            --data-dir)
+                shift
+                local custom_dir="${1:-}"
+                [ -z "$custom_dir" ] && die "--data-dir requires a path"
+                AGENT_DIR="$custom_dir"
+                SOCK_PATH="${AGENT_DIR}/agent.sock"
+                PID_FILE="${AGENT_DIR}/agent.pid"
+                CONFIG_FILE="${AGENT_DIR}/config.json"
+                LOG_FILE="${AGENT_DIR}/agent.log"
+                data_dir_opt="--data-dir ${AGENT_DIR}"
+                shift ;;
+            *)
+                die "Unknown option: $1" ;;
+        esac
+    done
+
+    if [ ! -f "$CONFIG_FILE" ]; then
+        echo "No config found. Running setup first..."
+        cmd_config
+    fi
+
+    mkdir -p "$AGENT_DIR"
+    local BIN
+    BIN="$(find_binary)"
+
+    # Remove stale socket
+    rm -f "$SOCK_PATH"
+
+    echo "=== Starting esp-agent ==="
+    echo "Binary:   $BIN"
+    echo "Data:     $AGENT_DIR"
+    echo "Log:      $LOG_FILE"
+    echo "Socket:   $SOCK_PATH"
+    echo "PID file: $PID_FILE"
+    echo ""
+
+    if [ "$foreground_mode" = "1" ]; then
+        # Foreground: no daemon, logs to terminal, wait blocks
+        echo "Running in foreground (Ctrl+C to stop)..."
+        echo ""
+        ESP_AGENT_DATA_DIR="$AGENT_DIR" "$BIN" \
+            --pid-file "$PID_FILE" \
+            $data_dir_opt $display_opt &
+        local pid=$!
+        echo "$pid" > "$PID_FILE"
+        wait "$pid" 2>/dev/null || true
+        rm -f "$PID_FILE" "$SOCK_PATH"
+    else
+        # Daemon mode: binary daemonizes itself
+        ESP_AGENT_DATA_DIR="$AGENT_DIR" "$BIN" \
+            --daemon \
+            --pid-file "$PID_FILE" \
+            $data_dir_opt $display_opt &
+        local pid=$!
+
+        # Wait for PID file to be written by daemon
+        local waited=0
+        while [ ! -f "$PID_FILE" ] && [ $waited -lt 30 ]; do
+            sleep 0.2
+            waited=$((waited + 1))
+        done
+
+        # Wait for socket to appear
+        waited=0
+        while [ ! -S "$SOCK_PATH" ] && [ $waited -lt 30 ]; do
+            sleep 0.2
+            waited=$((waited + 1))
+        done
+
+        if [ -S "$SOCK_PATH" ]; then
+            echo "Agent started (PID $(cat "$PID_FILE" 2>/dev/null)). Socket ready."
+            echo ""
+            [ -f "$LOG_FILE" ] && tail -f "$LOG_FILE"
+        else
+            echo "Agent may have failed to start. Check $LOG_FILE"
+        fi
+    fi
+}
+
+cmd_restart() {
+    if is_running; then
+        cmd_stop
+        echo ""
+    fi
+    cmd_start "$@"
+}
+
+cmd_stop() {
+    if ! is_running; then
+        echo "Agent is not running."
+        rm -f "$PID_FILE" "$SOCK_PATH"
+        return 0
+    fi
+
+    local pid
+    pid="$(cat "$PID_FILE")"
+    echo "Stopping agent (PID $pid)..."
+    kill "$pid" 2>/dev/null || true
+
+    # Wait for graceful shutdown
+    local waited=0
+    while kill -0 "$pid" 2>/dev/null && [ $waited -lt 30 ]; do
+        sleep 0.5
+        waited=$((waited + 1))
+    done
+
+    if kill -0 "$pid" 2>/dev/null; then
+        echo "Graceful shutdown timed out, forcing..."
+        kill -9 "$pid" 2>/dev/null || true
+        sleep 0.5
+    fi
+
+    rm -f "$PID_FILE" "$SOCK_PATH"
+    echo "Agent stopped."
+}
+
+cmd_status() {
+    if is_running; then
+        local pid
+        pid="$(cat "$PID_FILE")"
+        echo "Agent is running (PID $pid)"
+        [ -S "$SOCK_PATH" ] && echo "Socket:   $SOCK_PATH (ready)" || echo "Socket:   (not ready)"
+        [ -f "$CONFIG_FILE" ] && echo "Config:   $CONFIG_FILE"
+    else
+        echo "Agent is not running."
+        rm -f "$PID_FILE"
+    fi
+}
+
+cmd_logs() {
+    if ! is_running; then
+        die "Agent is not running. Start it first: esp-agent start"
+    fi
+    [ -f "$LOG_FILE" ] || die "Log file not found at $LOG_FILE."
+    echo "Tailing $LOG_FILE (Ctrl+C to stop)..."
+    echo ""
+    tail -f "$LOG_FILE"
+}
+
+cmd_service() {
+    local action="${1:-}"
+    case "$action" in
+        enable)
+            systemctl --user enable esp-agent.service
+            echo "Systemd user service enabled (auto-start on login)."
+            ;;
+        disable)
+            systemctl --user disable esp-agent.service
+            echo "Systemd user service disabled."
+            ;;
+        start)
+            systemctl --user start esp-agent.service
+            echo "Service started via systemd."
+            ;;
+        stop)
+            systemctl --user stop esp-agent.service
+            echo "Service stopped via systemd."
+            ;;
+        status)
+            systemctl --user status esp-agent.service
+            ;;
+        *)
+            echo "Usage: esp-agent service <enable|disable|start|stop|status>"
+            return 1
+            ;;
+    esac
+}
+
+cmd_build() {
+    echo "=== Building esp-agent ==="
+    mkdir -p "$BUILD_DIR"
+    cd "$BUILD_DIR"
+    cmake "$SCRIPT_DIR" -DCMAKE_BUILD_TYPE=Release
+    make -j"$(nproc)"
+    echo "Build complete: $BUILD_DIR/esp-claw-desktop"
+}
+
+cmd_clean() {
+    echo "Cleaning build directory..."
+    rm -rf "$BUILD_DIR"
+    echo "Clean complete."
+}
+
+cmd_help() {
+    # Show esp-agent management help (no REPL commands listed here)
+    echo "esp-agent v${VERSION} — Desktop simulator for esp-claw"
+    echo ""
+    echo "Usage: esp-agent <command> [args...]"
+    echo ""
+    echo "Management commands:"
+    echo "  config       Full setup wizard (LLM, channels, search keys, display)"
+    echo "  start        Start the agent as a background daemon (auto-tails logs)"
+    echo "               --foreground    Run in foreground (logs to terminal)"
+    echo "               --display       Enable SDL2 display window"
+    echo "               --no-display    Disable SDL2 display window"
+    echo "               --data-dir DIR  Custom data directory"
+    echo "  stop         Stop the agent service"
+    echo "  restart      Stop then start the agent service"
+    echo "  status       Check if the agent is running"
+    echo "  logs         Tail the agent log file"
+    echo "  service      Systemd service management (enable|disable|start|stop|status)"
+    echo "  build        Build the agent binary from source"
+    echo "  clean        Remove build artifacts"
+    echo ""
+    echo "All other commands are forwarded directly to the esp-claw agent CLI."
+    echo "Use 'esp-agent esp-claw help' to see available agent commands."
+    echo ""
+    echo "Examples:"
+    echo "  esp-agent ask \"Hello, what can you do?\""
+    echo "  esp-agent session"
+    echo "  esp-agent display on"
+    echo "  esp-agent lua --list"
+    echo "  esp-agent esp-claw help"
+    echo ""
+    echo "Other:"
+    echo "  esp-agent --version    Print version"
+    echo ""
+    echo "Data:  ~/.esp-agent/"
+    echo "Socket: ~/.esp-agent/agent.sock"
+    echo "Log:    ~/.esp-agent/agent.log"
+
+    # Append REPL help if agent is running
+    if is_running && [ -S "$SOCK_PATH" ]; then
+        echo ""
+        echo "--- esp-claw agent commands ---"
+        _agent_send "help"
+    fi
+}
+
+# ---- main ----
+
+case "${1:-help}" in
+    # Management commands (handled locally)
+    config)       shift; cmd_config "$@" ;;
+    start)        shift; cmd_start "$@" ;;
+    stop)         shift; cmd_stop "$@" ;;
+    restart)      shift; cmd_restart "$@" ;;
+    status)       shift; cmd_status "$@" ;;
+    logs)         shift; cmd_logs "$@" ;;
+    service)      shift; cmd_service "$@" ;;
+    build)        shift; cmd_build "$@" ;;
+    clean)        shift; cmd_clean "$@" ;;
+    --version)    echo "esp-agent v${VERSION}" ;;
+    help|--help|-h) shift; cmd_help "$@" ;;
+
+    # Explicit REPL passthrough prefix
+    esp-claw)     shift; _agent_send "$*" ;;
+
+    # Everything else → forwarded to the agent REPL
+    *)
+        _agent_send "$*" ;;
+esac

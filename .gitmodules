@@ -1,0 +1,3 @@
+[submodule "esp-claw"]
+	path = esp-claw
+	url = https://github.com/zz6zz666/esp-claw.git

@@ -1,0 +1,26 @@
+[Unit]
+Description=esp-agent — esp-claw Desktop AI Agent
+Documentation=https://github.com/espressif/esp-claw
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/esp-claw-desktop --foreground --pid-file %h/.esp-agent/agent.pid
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=esp-agent
+Environment=ESP_AGENT_DATA_DIR=%h/.esp-agent
+
+# Security hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.esp-agent
+ReadOnlyPaths=/usr/share/esp-agent
+
+[Install]
+WantedBy=default.target
