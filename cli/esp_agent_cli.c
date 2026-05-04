@@ -301,7 +301,7 @@ static int cmd_config(int argc, char **argv)
 
     /* LLM */
     printf("LLM Configuration\n");
-    printf("────────────────\n");
+    printf("----------------\n");
 
     printf("API Key: "); fflush(stdout);
     fgets(line, sizeof(line), stdin);
@@ -325,7 +325,7 @@ static int cmd_config(int argc, char **argv)
 
     /* Display */
     printf("\nDisplay (SDL2 window)\n");
-    printf("─────────────────────\n");
+    printf("---------------------\n");
     printf("Enable display? [Y/n]: "); fflush(stdout);
     fgets(line, sizeof(line), stdin);
     line[strcspn(line, "\r\n")] = '\0';
@@ -334,7 +334,7 @@ static int cmd_config(int argc, char **argv)
 
     /* Search */
     printf("\nSearch Configuration (optional)\n");
-    printf("───────────────────────────────\n");
+    printf("-------------------------------\n");
     printf("Brave Search API Key: "); fflush(stdout);
     fgets(line, sizeof(line), stdin);
     line[strcspn(line, "\r\n")] = '\0';
@@ -431,8 +431,14 @@ static int cmd_start(int argc, char **argv)
     /* Wait a moment for the agent to write its PID */
     Sleep(1500);
 
-    /* Tail logs */
-    return cmd_logs(0, NULL);
+    /* Verify PID file exists */
+    if (pid_file_exists()) {
+        printf("PID file written successfully.\n");
+        printf("Use 'esp-agent logs' to view logs.\n");
+    } else {
+        printf("Warning: PID file not yet written, agent may still be starting.\n");
+    }
+    return 0;
 
 #else
     /* POSIX: use existing shell script approach */
