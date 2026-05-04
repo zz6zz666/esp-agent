@@ -29,8 +29,8 @@ extern "C" {
 /* Version string for desktop component packages */
 #define CLAW_DESKTOP_COMPONENT_VERSION "1.0.0"
 
-/* Register the desktop_input capability group (mouse + keyboard input). */
-esp_err_t cap_input_register_group(void);
+/* Register the desktop input Lua module (keyboard + mouse for scripts). */
+esp_err_t lua_module_input_register(void);
 
 #ifdef __cplusplus
 }

@@ -37,7 +37,7 @@
 #include "claw_skill.h"
 #include "display_hal.h"
 #include "display_hal_input.h"
-#include "cap_lua.h"
+#include "component_desktop.h"
 #include "esp_console.h"
 #include "esp_err.h"
 #include "esp_log.h"
@@ -101,25 +101,6 @@ extern bool display_hal_recreate_emote(void);
 #if defined(PLATFORM_WINDOWS)
 # include "tray_icon.h"
 #endif
-
-/* ---- Lua timer module (wall-clock sleep for Lua scripts) ---- */
-#include "lua.h"
-#include "lauxlib.h"
-
-static int l_timer_sleep_ms(lua_State *L)
-{
-    uint32_t ms = (uint32_t)luaL_checkinteger(L, 1);
-    display_hal_sleep_ms(ms);
-    return 0;
-}
-
-static int luaopen_timer(lua_State *L)
-{
-    lua_newtable(L);
-    lua_pushcfunction(L, l_timer_sleep_ms);
-    lua_setfield(L, -2, "sleep_ms");
-    return 1;
-}
 
 /* ---- helpers ---- */
 
@@ -354,80 +335,6 @@ static void ensure_default_router_rules(const char *path)
         "  }\n"
         "]\n";
     write_default_json(path, json);
-}
-
-/*
- * Write default skills_list.json if missing.
- */
-static void ensure_default_skills(const char *skills_dir)
-{
-    char path[512];
-    snprintf(path, sizeof(path), "%s/skills_list.json", skills_dir);
-    if (access(path, F_OK) == 0) return;
-
-    const char *json =
-        "{\n"
-        "  \"skills\": [\n"
-        "    {\n"
-        "      \"id\": \"lua_runner\",\n"
-        "      \"file\": \"lua_runner.md\",\n"
-        "      \"summary\": \"Run Lua scripts for automation and hardware interaction.\",\n"
-        "      \"cap_groups\": [\"cap_lua\"]\n"
-        "    },\n"
-        "    {\n"
-        "      \"id\": \"memory_ops\",\n"
-        "      \"file\": \"memory_ops.md\",\n"
-        "      \"summary\": \"Store, recall, update, search, and manage long-term memory.\",\n"
-        "      \"cap_groups\": [\"claw_memory\"]\n"
-        "    },\n"
-        "    {\n"
-        "      \"id\": \"file_ops\",\n"
-        "      \"file\": \"file_ops.md\",\n"
-        "      \"summary\": \"List, read, write, and delete files on the device.\",\n"
-        "      \"cap_groups\": [\"cap_files\"]\n"
-        "    }\n"
-        "  ]\n"
-        "}\n";
-    write_default_json(path, json);
-
-    const char *docs[3][2] = {
-        {"lua_runner.md",
-         "# Lua Script Runner\n\n"
-         "Run Lua scripts for automation, data processing, and hardware interaction.\n\n"
-         "## Capabilities\n"
-         "- Execute Lua scripts with `run_lua` capability\n"
-         "- Scripts can interact with device hardware and sensors\n"
-         "- Async job support for long-running scripts\n\n"
-         "## Usage\n"
-         "Place Lua scripts in the scripts directory and call `run_lua` with the script name.\n"},
-        {"memory_ops.md",
-         "# Memory Operations\n\n"
-         "Store, recall, update, search, and manage long-term memory for the agent.\n\n"
-         "## Capabilities\n"
-         "- `memory_store` — Save a new memory with label and content\n"
-         "- `memory_recall` — Retrieve memories by label or keyword\n"
-         "- `memory_update` — Modify an existing memory\n"
-         "- `memory_forget` — Remove a memory by label\n"
-         "- `memory_search` — Full-text search across all memories\n\n"
-         "## Usage\n"
-         "Activate this skill when the user asks to remember, recall, update, or forget information.\n"},
-        {"file_ops.md",
-         "# File Operations\n\n"
-         "List, read, write, copy, move, and delete files on the device.\n\n"
-         "## Capabilities\n"
-         "- `read_file` — Read contents of a text file\n"
-         "- `write_file` — Create or overwrite a text file\n"
-         "- `delete_file` — Delete a file\n"
-         "- `copy_file` — Copy a file to a new location\n"
-         "- `move_file` — Move or rename a file\n"
-         "- `list_dir` — Recursively list files, optionally filtered by prefix\n\n"
-         "## Usage\n"
-         "Activate this skill when you need to work with files on the device filesystem.\n"},
-    };
-    for (int i = 0; i < 3; i++) {
-        snprintf(path, sizeof(path), "%s/%s", skills_dir, docs[i][0]);
-        write_default_json(path, docs[i][1]);
-    }
 }
 
 /* ---- daemonization ---- */
@@ -687,7 +594,6 @@ int main(int argc, char **argv)
     seed_defaults(abs_data_dir);
 
     /* Default data files (fallback if no system defaults) */
-    ensure_default_skills(abs_skills);
     ensure_default_router_rules(abs_router_rules);
     write_default_json(abs_scheduler, "[]");
 
@@ -942,10 +848,69 @@ int main(int argc, char **argv)
     strncpy(paths.scheduler_rules_path, abs_scheduler, sizeof(paths.scheduler_rules_path) - 1);
     strncpy(paths.im_attachment_root, abs_inbox, sizeof(paths.im_attachment_root) - 1);
 
-    /* Register timer module BEFORE app_claw_start (modules lock after init) */
-    cap_lua_register_module("timer", luaopen_timer);
-
     /* ---- bootstrap agent ---- */
+    /* Prune skills_list.json: hide IM skills for channels not configured */
+    {
+        char sk_list[PATH_MAX];
+        snprintf(sk_list, sizeof(sk_list), "%s/skills/skills_list.json", abs_data_dir);
+        FILE *sf = fopen(sk_list, "rb");
+        if (sf) {
+            fseek(sf, 0, SEEK_END);
+            long ssz = ftell(sf);
+            rewind(sf);
+            char *sbuf = calloc(1, (size_t)ssz + 1);
+            if (sbuf && fread(sbuf, 1, (size_t)ssz, sf) > 0) {
+                sbuf[ssz] = '\0';
+                cJSON *skroot = cJSON_Parse(sbuf);
+                if (skroot) {
+                    cJSON *skills_arr = cJSON_GetObjectItemCaseSensitive(skroot, "skills");
+                    if (cJSON_IsArray(skills_arr)) {
+                        int remove_flags = 0;
+                        #define SKILL_QQ      1
+                        #define SKILL_TG      2
+                        #define SKILL_FEISHU  4
+                        #define SKILL_WECHAT  8
+                        if (!config.qq_app_id[0] || !config.qq_app_secret[0]) remove_flags |= SKILL_QQ;
+                        if (!config.tg_bot_token[0])                    remove_flags |= SKILL_TG;
+                        if (!config.feishu_app_id[0] || !config.feishu_app_secret[0]) remove_flags |= SKILL_FEISHU;
+                        if (!config.wechat_token[0])                    remove_flags |= SKILL_WECHAT;
+                        if (remove_flags) {
+                            int len = cJSON_GetArraySize(skills_arr);
+                            for (int i = len - 1; i >= 0; i--) {
+                                cJSON *entry = cJSON_GetArrayItem(skills_arr, i);
+                                const char *fid = cJSON_GetObjectItemCaseSensitive(entry, "id") ? cJSON_GetObjectItemCaseSensitive(entry, "id")->valuestring : NULL;
+                                if (fid) {
+                                    int drop = 0;
+                                    if ((remove_flags & SKILL_QQ)     && !strcmp(fid, "cap_im_qq"))     drop = 1;
+                                    if ((remove_flags & SKILL_TG)     && !strcmp(fid, "cap_im_tg"))     drop = 1;
+                                    if ((remove_flags & SKILL_FEISHU) && !strcmp(fid, "cap_im_feishu")) drop = 1;
+                                    if ((remove_flags & SKILL_WECHAT) && !strcmp(fid, "cap_im_wechat")) drop = 1;
+                                    if (drop) cJSON_DeleteItemFromArray(skills_arr, i);
+                                }
+                            }
+                        }
+                        char *filtered = cJSON_Print(skroot);
+                        if (filtered) {
+                            cJSON_Delete(skroot);
+                            fclose(sf);
+                            FILE *wf = fopen(sk_list, "wb");
+                            if (wf) { fputs(filtered, wf); fclose(wf); }
+                            free(filtered);
+                            goto prune_done;
+                        }
+                    }
+                    cJSON_Delete(skroot);
+                }
+                free(sbuf);
+            }
+            prune_done:
+            fclose(sf);
+        }
+    }
+
+    /* Register desktop input Lua module (before modules lock) */
+    lua_module_input_register();
+
     esp_err_t err = app_claw_start(&config, &paths);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start app_claw: %s", esp_err_to_name(err));
@@ -989,9 +954,6 @@ int main(int argc, char **argv)
         }
     }
 #endif
-
-    /* Desktop input capability (mouse + keyboard) */
-    cap_input_register_group();
 
     /* ---- start emote engine (boot animation) ---- */
     err = app_claw_ui_start();

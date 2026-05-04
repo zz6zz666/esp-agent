@@ -135,6 +135,10 @@ add_compile_definitions(
     CONFIG_APP_CLAW_LUA_MODULE_DISPLAY=1
     CONFIG_APP_CLAW_LUA_MODULE_BOARD_MANAGER=1
     CONFIG_APP_CLAW_LUA_MODULE_CAPABILITY=1
+    CONFIG_APP_CLAW_LUA_MODULE_DELAY=1
+    CONFIG_APP_CLAW_LUA_MODULE_STORAGE=1
+    CONFIG_APP_CLAW_LUA_MODULE_SYSTEM=1
+    CONFIG_APP_CLAW_LUA_MODULE_EVENT_PUBLISHER=1
     CONFIG_APP_CLAW_ENABLE_EMOTE=1
     CONFIG_ESP_BOARD_DEV_DISPLAY_LCD_SUPPORT=1
     CONFIG_ESP_CONSOLE_UART_DEFAULT=1
@@ -192,6 +196,11 @@ set(COMMON_INCLUDES
     ${ESPCLAW_COMPONENTS}/lua_modules/lua_module_board_manager/include
     # Lua modules call capability
     ${ESPCLAW_COMPONENTS}/lua_modules/lua_module_call_capability/include
+    # Lua modules: delay, storage, system, event_publisher
+    ${ESPCLAW_COMPONENTS}/lua_modules/lua_module_delay/include
+    ${ESPCLAW_COMPONENTS}/lua_modules/lua_module_storage/include
+    ${ESPCLAW_COMPONENTS}/lua_modules/lua_module_system/include
+    ${ESPCLAW_COMPONENTS}/lua_modules/lua_module_event_publisher/include
     # deps: LVGL stub header (font types only)
     ${DEPS_DIR}/lvgl
     # deps: SoC stubs
@@ -337,6 +346,18 @@ set(ESPCLAW_SRCS
 
     # lua_module_call_capability (call cap from Lua)
     ${ESPCLAW_COMPONENTS}/lua_modules/lua_module_call_capability/src/lua_module_capability.c
+
+    # lua_module_delay (wall-clock sleep)
+    ${ESPCLAW_COMPONENTS}/lua_modules/lua_module_delay/src/lua_module_delay.c
+
+    # lua_module_storage (file I/O)
+    ${ESPCLAW_COMPONENTS}/lua_modules/lua_module_storage/src/lua_module_storage.c
+
+    # lua_module_system (chip/device info)
+    ${ESPCLAW_COMPONENTS}/lua_modules/lua_module_system/src/lua_module_system.c
+
+    # lua_module_event_publisher (publish events from Lua)
+    ${ESPCLAW_COMPONENTS}/lua_modules/lua_module_event_publisher/src/lua_module_event_publisher.c
 )
 
 # ---- Desktop main ----

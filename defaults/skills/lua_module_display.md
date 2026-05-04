@@ -15,7 +15,7 @@ On the desktop simulator, `display` does not require `board_manager`:
 
 ```lua
 local display = require("display")
-local timer   = require("timer")
+local delay   = require("delay")
 
 -- display is auto-initialised; width/height are ready immediately
 local w, h = display.width(), display.height()
@@ -23,16 +23,16 @@ display.clear(5, 3, 15)
 
 display.draw_text(10, 20, "Hello World!", {r=255, g=255, b=255, font_size=24})
 display.present()
-timer.sleep_ms(10000)  -- keep visible for 10 seconds
+delay.delay_ms(10000)  -- keep visible for 10 seconds
 display.deinit()
 ```
 
 ## Important rules
 
 - All coordinates and sizes accept integers. Floating-point values are rounded automatically.
-- Colors are always three integers: `r, g, b`.
+- Colors are always three integers: `r`, `g`, `b`.
 - Text drawing supports Unicode: Chinese, Japanese, emoji, and special symbols all render correctly.
-- Use `timer.sleep_ms(ms)` to keep the display visible — without it the window closes instantly.
+- Use `delay.sleep_ms(ms)` to keep the display visible — without it the window closes instantly.
 - This is critical: screen display duration must be considered. Do not deinitialize or exit immediately after `present()`, or the image may only flash briefly. Keep the display session alive long enough, and handle that hold time asynchronously when appropriate.
 
 ## Screen lifecycle
@@ -395,25 +395,19 @@ Returns:
 2. Draw text, shapes, or images
 3. Call `display.present()` or `display.present_rect(...)`
 4. Call `display.end_frame()`
-5. Use `timer.sleep_ms(...)` to keep the output visible
+5. Use `delay.sleep_ms(...)` to keep the output visible
 6. Call `display.deinit()` before exit
 
 ## Example
 
 ```lua
 local display = require("display")
-local timer   = require("timer")
+local delay   = require("delay")
 
 display.begin_frame({ clear = true, r = 12, g = 18, b = 28 })
-
-display.draw_rect(12, 12, display.width() - 24, display.height() - 24, 80, 120, 160)
-display.fill_rect(20, 40, 80, 36, 72, 208, 235)
-display.draw_text(24, 90, "Lua Display Demo", {
-    r = 245, g = 244, b = 238, font_size = 24,
-})
-
+...
 display.present()
-timer.sleep_ms(5000)
+delay.sleep_ms(5000)
 display.end_frame()
 display.deinit()
 ```
