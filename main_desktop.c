@@ -18,6 +18,7 @@
 
 #include "app_claw.h"
 #include "app_capabilities.h"
+#include "cap_cli.h"
 #include "cJSON.h"
 #include "claw_core.h"
 #include "claw_event_publisher.h"
@@ -713,6 +714,44 @@ int main(int argc, char **argv)
         ESP_LOGE(TAG, "Failed to start app_claw: %s", esp_err_to_name(err));
         return 1;
     }
+
+    /* ---- cap_cli: allow LLM to run safe CLI commands ---- */
+#if CONFIG_APP_CLAW_CAP_CLI
+    {
+        cap_cli_config_t cli_cfg = {
+            .max_commands = 16,
+            .max_output_bytes = 4096,
+        };
+        if (cap_cli_init(&cli_cfg) == ESP_OK) {
+            cap_cli_register_command(&(cap_cli_command_t){
+                .command_name = "help", .description = "list commands",
+                .usage_hint = "help" });
+            cap_cli_register_command(&(cap_cli_command_t){
+                .command_name = "lua", .description = "manage Lua scripts",
+                .usage_hint = "lua --list|--run|--write" });
+            cap_cli_register_command(&(cap_cli_command_t){
+                .command_name = "skill", .description = "manage skills",
+                .usage_hint = "skill --list|--activate|--deactivate" });
+            cap_cli_register_command(&(cap_cli_command_t){
+                .command_name = "event_router", .description = "manage event routing",
+                .usage_hint = "event_router --rules|--add-rule-json" });
+            cap_cli_register_command(&(cap_cli_command_t){
+                .command_name = "session", .description = "manage sessions",
+                .usage_hint = "session [id]" });
+            cap_cli_register_command(&(cap_cli_command_t){
+                .command_name = "cap", .description = "manage capabilities",
+                .usage_hint = "cap list|groups" });
+            cap_cli_register_command(&(cap_cli_command_t){
+                .command_name = "auto", .description = "auto rules",
+                .usage_hint = "auto rules|reload" });
+            cap_cli_register_command(&(cap_cli_command_t){
+                .command_name = "display", .description = "display control",
+                .usage_hint = "display on|off|status" });
+            cap_cli_register_group();
+            ESP_LOGI(TAG, "cap_cli registered with 8 allowed commands");
+        }
+    }
+#endif
 
     /* ---- start emote engine (boot animation) ---- */
     err = app_claw_ui_start();

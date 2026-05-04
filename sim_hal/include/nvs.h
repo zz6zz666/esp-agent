@@ -15,8 +15,10 @@ extern "C" {
 typedef uint32_t nvs_handle_t;
 typedef uint32_t nvs_handle;
 
-#define NVS_READONLY  1
-#define NVS_READWRITE 2
+typedef enum {
+    NVS_READONLY,
+    NVS_READWRITE
+} nvs_open_mode_t;
 #define NVS_KEY_NAME_MAX_SIZE 16
 #define ESP_ERR_NVS_NOT_FOUND  0x1104
 

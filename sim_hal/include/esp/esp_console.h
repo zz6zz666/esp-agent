@@ -63,6 +63,8 @@ esp_err_t esp_console_cmd_register(const esp_console_cmd_t *cmd);
 esp_err_t esp_console_register_help_command(void);
 esp_err_t esp_console_run(const char *command_line, int *cmd_ret);
 
+size_t esp_console_split_argv(char *line, char **argv, size_t argv_size);
+
 esp_err_t esp_console_new_repl_uart(const esp_console_dev_uart_config_t *dev_config,
                                     const esp_console_repl_config_t *repl_config,
                                     esp_console_repl_t **ret_repl);

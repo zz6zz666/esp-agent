@@ -153,6 +153,35 @@ esp_err_t esp_console_register_help_command(void)
 }
 
 /* ------------------------------------------------------------------ */
+/*  Argument splitting (public API used by cap_cli)                    */
+/* ------------------------------------------------------------------ */
+
+size_t esp_console_split_argv(char *line, char **argv, size_t argv_size)
+{
+    size_t argc = 0;
+    char *p = line;
+
+    if (!line || !argv || argv_size == 0) return 0;
+
+    while (*p && argc < argv_size) {
+        while (*p && isspace((unsigned char)*p)) p++;
+        if (!*p) break;
+
+        if (*p == '"') {
+            p++;
+            argv[argc++] = p;
+            while (*p && *p != '"') p++;
+            if (*p == '"') { *p = '\0'; p++; }
+        } else {
+            argv[argc++] = p;
+            while (*p && !isspace((unsigned char)*p)) p++;
+            if (*p) { *p = '\0'; p++; }
+        }
+    }
+    return argc;
+}
+
+/* ------------------------------------------------------------------ */
 /*  Command execution (used by oneshot handler)                       */
 /* ------------------------------------------------------------------ */
 

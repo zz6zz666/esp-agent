@@ -5,14 +5,26 @@
  */
 #pragma once
 #include "esp_err.h"
+#include <arpa/inet.h>
+#include <ifaddrs.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <net/if.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 typedef void *esp_netif_t;
+
+/* IPSTR / IP2STR macros for printf-style formatting of IPv4 addresses */
+#define IPSTR           "%d.%d.%d.%d"
+#define IP2STR(ipaddr)  (int)((ipaddr)->addr & 0xff), \
+                        (int)(((ipaddr)->addr >> 8) & 0xff), \
+                        (int)(((ipaddr)->addr >> 16) & 0xff), \
+                        (int)(((ipaddr)->addr >> 24) & 0xff)
 
 /* IP event types */
 typedef enum {
@@ -64,10 +76,42 @@ static inline esp_netif_t esp_netif_get_handle_from_ifkey(const char *if_key) {
 static inline esp_err_t esp_netif_get_ip_info(esp_netif_t netif, esp_netif_ip_info_t *ip_info) {
     (void)netif;
     if (!ip_info) return ESP_ERR_INVALID_ARG;
+
+    struct ifaddrs *ifaddr = NULL, *ifa;
+    uint32_t found_ip = 0, found_mask = 0;
+
+    if (getifaddrs(&ifaddr) == 0) {
+        for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
+            if (!ifa->ifa_addr || ifa->ifa_addr->sa_family != AF_INET)
+                continue;
+            /* Skip loopback — pick the first real interface */
+            if (ifa->ifa_flags & IFF_LOOPBACK)
+                continue;
+            struct sockaddr_in *sin = (struct sockaddr_in *)ifa->ifa_addr;
+            /* s_addr on LE x86 already matches ESP32 convention (first octet in LSB).
+             * ntohl would reverse the bytes, so we use the raw s_addr value directly. */
+            found_ip = sin->sin_addr.s_addr;
+            if (ifa->ifa_netmask) {
+                struct sockaddr_in *nm = (struct sockaddr_in *)ifa->ifa_netmask;
+                found_mask = nm->sin_addr.s_addr;
+            }
+            break;
+        }
+        freeifaddrs(ifaddr);
+    }
+
     memset(ip_info, 0, sizeof(*ip_info));
-    ip_info->ip.addr = 0x0100007f;       /* 127.0.0.1 (host loopback, agent binds here) */
-    ip_info->netmask.addr = 0x00ffffff;   /* 255.255.255.0 */
-    ip_info->gw.addr = 0x0100007f;        /* 127.0.0.1 */
+    if (found_ip) {
+        ip_info->ip.addr = found_ip;
+        ip_info->netmask.addr = found_mask ? found_mask : 0x00ffffff;
+        /* Gateway: common convention is .1 on the same subnet */
+        ip_info->gw.addr = (found_ip & found_mask) | 0x01000000;
+    } else {
+        /* Fallback: loopback */
+        ip_info->ip.addr = 0x0100007f;
+        ip_info->netmask.addr = 0x00ffffff;
+        ip_info->gw.addr = 0x0100007f;
+    }
     return ESP_OK;
 }
 

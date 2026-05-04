@@ -678,3 +678,188 @@ BaseType_t xEventGroupSetBitsFromISR(EventGroupHandle_t eg, EventBits_t bits,
     xEventGroupSetBits(eg, bits);
     return pdPASS;
 }
+
+/* ================================================================
+ *  Runtime stats — read real thread info from /proc and /proc/stat
+ * ================================================================ */
+
+#include <dirent.h>
+
+#define TASK_MAX_NAME_LEN 32
+
+/*
+ * Thread name table.
+ * Each entry corresponds to a TID (pthread) from /proc/self/task/.
+ * Populated on first uxTaskGetSystemState() call, refreshed on each call.
+ */
+typedef struct {
+    pid_t  tid;
+    char   name[TASK_MAX_NAME_LEN];
+    uint64_t utime_ticks;  /* user CPU time in clock ticks */
+    uint64_t stime_ticks;  /* kernel CPU time in clock ticks */
+} thread_entry_t;
+
+static thread_entry_t *s_threads = NULL;
+static UBaseType_t     s_thread_count = 0;
+
+/* Read /proc/stat (first line) and return the host idle percentage [0.0, 100.0] */
+static double _host_idle_pct(void)
+{
+    FILE *f = fopen("/proc/stat", "r");
+    if (!f) return 95.0; /* guess mostly idle */
+    char line[512];
+    double idle_pct = 95.0;
+    if (fgets(line, sizeof(line), f)) {
+        unsigned long long user=0, nice=0, system=0, idle=0, iowait=0;
+        unsigned long long irq=0, softirq=0, steal=0;
+        int n = sscanf(line, "cpu %llu %llu %llu %llu %llu %llu %llu %llu",
+                       &user, &nice, &system, &idle, &iowait, &irq, &softirq, &steal);
+        if (n >= 4) {
+            unsigned long long total_idle = idle + iowait;
+            unsigned long long total = user + nice + system + idle + iowait + irq + softirq + steal;
+            if (total > 0)
+                idle_pct = (double)total_idle * 100.0 / (double)total;
+        }
+    }
+    fclose(f);
+    return idle_pct;
+}
+
+/* Enumerate /proc/self/task/<tid>/stat to get thread names and CPU times */
+static void _refresh_threads(void)
+{
+    free(s_threads);
+    s_threads = NULL;
+    s_thread_count = 0;
+
+    long ticks_per_sec = sysconf(_SC_CLK_TCK);
+    if (ticks_per_sec <= 0) ticks_per_sec = 100;
+
+    DIR *d = opendir("/proc/self/task");
+    if (!d) return;
+
+    /* Count entries first */
+    size_t cap = 0;
+    struct dirent *ent;
+    while ((ent = readdir(d)) != NULL) {
+        if (ent->d_name[0] == '.') continue;
+        if (cap == s_thread_count) {
+            cap = cap ? cap * 2 : 64;
+            s_threads = realloc(s_threads, cap * sizeof(*s_threads));
+            if (!s_threads) { closedir(d); return; }
+        }
+        thread_entry_t *te = &s_threads[s_thread_count];
+        te->tid = (pid_t)atoi(ent->d_name);
+        te->name[0] = '\0';
+        te->utime_ticks = 0;
+        te->stime_ticks = 0;
+
+        /* Read /proc/self/task/<tid>/stat for name and CPU times */
+        char path[256];
+        snprintf(path, sizeof(path), "/proc/self/task/%d/stat", te->tid);
+        FILE *sf = fopen(path, "r");
+        if (sf) {
+            char comm[64] = {0};
+            char state = '?';
+            unsigned long long utime=0, stime=0;
+            /* Format: pid (comm) state ... utime stime (fields 14,15) */
+            int matched = fscanf(sf, "%*d %63s %c %*d %*d %*d %*d %*d %*u %*u %*u %*u %*u %llu %llu",
+                                 comm, &state, &utime, &stime);
+            fclose(sf);
+
+            /* Strip parentheses from comm */
+            size_t clen = strlen(comm);
+            if (clen >= 2 && comm[0] == '(' && comm[clen-1] == ')') {
+                memmove(comm, comm + 1, clen - 2);
+                comm[clen - 2] = '\0';
+            }
+            strncpy(te->name, comm, TASK_MAX_NAME_LEN - 1);
+
+            if (matched == 4 || matched == 5) {
+                te->utime_ticks = utime;
+                te->stime_ticks = stime;
+            }
+        }
+        s_thread_count++;
+    }
+    closedir(d);
+}
+
+UBaseType_t uxTaskGetNumberOfTasks(void)
+{
+    _refresh_threads();
+    /* +1 for the synthetic IDLE task we add in uxTaskGetSystemState */
+    return s_thread_count + 1;
+}
+
+UBaseType_t uxTaskGetSystemState(TaskStatus_t *pxTaskStatusArray,
+                                  UBaseType_t uxArraySize,
+                                  uint32_t *pulTotalRunTime)
+{
+    _refresh_threads();
+
+    double host_idle_pct = _host_idle_pct();
+    if (host_idle_pct < 1.0) host_idle_pct = 1.0;
+    if (host_idle_pct > 99.0) host_idle_pct = 99.0;
+    double host_cpu_pct = 100.0 - host_idle_pct;
+
+    /* Compute total runtime from real threads */
+    uint64_t real_total_ticks = 0;
+    UBaseType_t i;
+    for (i = 0; i < s_thread_count; i++) {
+        real_total_ticks += s_threads[i].utime_ticks + s_threads[i].stime_ticks;
+    }
+    if (real_total_ticks == 0) real_total_ticks = 1000;
+
+    /*
+     * We want: idle_runtime / (real_total + idle_runtime) = host_idle_pct / 100
+     * → idle_runtime = host_idle_pct * real_total / host_cpu_pct
+     */
+    uint64_t idle_ticks = (uint64_t)(host_idle_pct * (double)real_total_ticks / host_cpu_pct);
+    if (idle_ticks > UINT32_MAX) idle_ticks = UINT32_MAX;
+
+    uint64_t total_ticks = real_total_ticks + idle_ticks;
+    if (total_ticks > UINT32_MAX) {
+        /* Scale down proportionally */
+        double scale = (double)UINT32_MAX / (double)total_ticks;
+        real_total_ticks = (uint64_t)((double)real_total_ticks * scale);
+        idle_ticks = (uint64_t)((double)idle_ticks * scale);
+        total_ticks = real_total_ticks + idle_ticks;
+    }
+
+    if (pulTotalRunTime) *pulTotalRunTime = (uint32_t)total_ticks;
+
+    /* Fill real tasks */
+    UBaseType_t count = 0;
+    UBaseType_t limit = uxArraySize > 0 ? uxArraySize - 1 : 0; /* reserve 1 slot for IDLE */
+    for (i = 0; i < s_thread_count && count < limit; i++) {
+        TaskStatus_t *ts = &pxTaskStatusArray[count];
+        memset(ts, 0, sizeof(*ts));
+        ts->xHandle = (TaskHandle_t)(uintptr_t)(size_t)s_threads[i].tid;
+        ts->pcTaskName = s_threads[i].name[0] ? s_threads[i].name : "pthread";
+        ts->xTaskNumber = count;
+        ts->eCurrentState = eReady;
+        ts->uxCurrentPriority = 1;
+        ts->uxBasePriority = 1;
+        /* Scale each real task's runtime to fit in the scaled total */
+        uint64_t task_ticks = s_threads[i].utime_ticks + s_threads[i].stime_ticks;
+        ts->ulRunTimeCounter = (uint32_t)(task_ticks > 0 ? task_ticks : 1);
+        count++;
+    }
+
+    /* Add synthetic IDLE task(s) so cap_system's formula gives real host CPU% */
+    if (count < uxArraySize) {
+        TaskStatus_t *ts = &pxTaskStatusArray[count];
+        memset(ts, 0, sizeof(*ts));
+        ts->xHandle = (TaskHandle_t)(uintptr_t)0;
+        ts->pcTaskName = "IDLE0";
+        ts->xTaskNumber = count;
+        ts->eCurrentState = eRunning;
+        ts->uxCurrentPriority = 0;
+        ts->uxBasePriority = 0;
+        ts->ulRunTimeCounter = (uint32_t)idle_ticks;
+        count++;
+    }
+
+    return count;
+}

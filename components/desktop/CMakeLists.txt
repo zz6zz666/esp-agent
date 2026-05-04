@@ -7,7 +7,7 @@
 #   file(GLOB_RECURSE desktop_srcs src/*.c)
 #   target_sources(esp-claw-desktop PRIVATE ${desktop_srcs})
 
-if(NOT SIMULATOR_BUILD)
+if(NOT DEFINED SIMULATOR_BUILD)
     message(FATAL_ERROR "components/desktop/ must only be built with SIMULATOR_BUILD")
 endif()
 

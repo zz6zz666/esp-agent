@@ -106,8 +106,17 @@ add_compile_definitions(
     CONFIG_APP_CLAW_CAP_FILES=1
     CONFIG_APP_CLAW_CAP_SKILL_MGR=1
     CONFIG_APP_CLAW_CAP_ROUTER_MGR=1
+    CONFIG_APP_CLAW_CAP_LLM_INSPECT=1
+    CONFIG_APP_CLAW_CAP_WEB_SEARCH=1
+    CONFIG_APP_CLAW_CAP_TIME=1
+    CONFIG_APP_CLAW_CAP_SCHEDULER=1
+    CONFIG_APP_CLAW_CAP_SYSTEM=1
+    CONFIG_APP_CLAW_CAP_CLI=1
+    CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=1
+    CONFIG_FREERTOS_USE_TRACE_FACILITY=1
     CONFIG_APP_CLAW_MEMORY_MODE_FULL=1
     CONFIG_APP_CLAW_ENABLE_CLI=1
+    CONFIG_LWIP_SNTP_MAX_SERVERS=1
     CONFIG_APP_CLAW_LUA_MODULE_DISPLAY=1
     CONFIG_APP_CLAW_LUA_MODULE_BOARD_MANAGER=1
     CONFIG_APP_CLAW_ENABLE_EMOTE=1
@@ -146,6 +155,7 @@ set(COMMON_INCLUDES
     ${ESPCLAW_COMPONENTS}/claw_capabilities/cap_time/include
     ${ESPCLAW_COMPONENTS}/claw_capabilities/cap_web_search/include
     ${ESPCLAW_COMPONENTS}/claw_capabilities/cap_skill_mgr/include
+    ${ESPCLAW_COMPONENTS}/claw_capabilities/cap_cli/include
     ${ESPCLAW_COMPONENTS}/claw_capabilities/cap_session_mgr/include
     ${ESPCLAW_COMPONENTS}/claw_capabilities/cap_router_mgr/include
     ${ESPCLAW_COMPONENTS}/claw_capabilities/cap_llm_inspect/include
@@ -219,6 +229,9 @@ set(ESPCLAW_SRCS
     ${ESPCLAW_COMPONENTS}/claw_capabilities/cap_lua/src/cmd_cap_lua.c
     ${ESPCLAW_COMPONENTS}/claw_capabilities/cap_router_mgr/src/cmd_cap_router_mgr.c
     ${ESPCLAW_COMPONENTS}/claw_capabilities/cap_skill_mgr/src/cmd_cap_skill.c
+    ${ESPCLAW_COMPONENTS}/claw_capabilities/cap_llm_inspect/src/cmd_cap_llm_inspect.c
+    ${ESPCLAW_COMPONENTS}/claw_capabilities/cap_web_search/src/cmd_cap_web_search.c
+    ${ESPCLAW_COMPONENTS}/claw_capabilities/cap_time/src/cmd_cap_time.c
 
     # cap_lua
     ${ESPCLAW_COMPONENTS}/claw_capabilities/cap_lua/src/cap_lua.c
@@ -244,22 +257,29 @@ set(ESPCLAW_SRCS
     ${ESPCLAW_COMPONENTS}/claw_capabilities/cap_im_wechat/src/cap_im_wechat.c
     ${ESPCLAW_COMPONENTS}/claw_capabilities/cap_im_wechat/src/cmd_cap_im_wechat.c
 
+    # cap_llm_inspect
+    ${ESPCLAW_COMPONENTS}/claw_capabilities/cap_llm_inspect/src/cap_llm_inspect.c
+
+    # cap_web_search
+    ${ESPCLAW_COMPONENTS}/claw_capabilities/cap_web_search/src/cap_web_search.c
+
     # cap_im_attachment (shared attachment download/upload helpers)
     ${ESPCLAW_COMPONENTS}/claw_capabilities/cap_im_attachment/src/cap_im_attachment.c
 
     # cap_files
     ${ESPCLAW_COMPONENTS}/claw_capabilities/cap_files/src/cap_files.c
 
-    # cap_scheduler — requires full NVS integration, skip for now
-    # ${ESPCLAW_COMPONENTS}/claw_capabilities/cap_scheduler/src/cap_scheduler.c
-    # ${ESPCLAW_COMPONENTS}/claw_capabilities/cap_scheduler/src/cap_scheduler_parser.c
-    # ${ESPCLAW_COMPONENTS}/claw_capabilities/cap_scheduler/src/cap_scheduler_store.c
+    # cap_scheduler
+    ${ESPCLAW_COMPONENTS}/claw_capabilities/cap_scheduler/src/cap_scheduler.c
+    ${ESPCLAW_COMPONENTS}/claw_capabilities/cap_scheduler/src/cap_scheduler_parser.c
+    ${ESPCLAW_COMPONENTS}/claw_capabilities/cap_scheduler/src/cap_scheduler_store.c
+    ${ESPCLAW_COMPONENTS}/claw_capabilities/cap_scheduler/src/cmd_cap_scheduler.c
 
-    # cap_system — requires many ESP-IDF structs, skip for now
-    # ${ESPCLAW_COMPONENTS}/claw_capabilities/cap_system/src/cap_system.c
+    # cap_time
+    ${ESPCLAW_COMPONENTS}/claw_capabilities/cap_time/src/cap_time.c
 
-    # cap_time — requires SNTP, skip for now
-    # ${ESPCLAW_COMPONENTS}/claw_capabilities/cap_time/src/cap_time.c
+    # cap_cli
+    ${ESPCLAW_COMPONENTS}/claw_capabilities/cap_cli/src/cap_cli.c
 
     # cap_session_mgr
     ${ESPCLAW_COMPONENTS}/claw_capabilities/cap_session_mgr/src/cap_session_mgr.c
@@ -267,11 +287,11 @@ set(ESPCLAW_SRCS
     # cap_skill_mgr
     ${ESPCLAW_COMPONENTS}/claw_capabilities/cap_skill_mgr/src/cap_skill_mgr.c
 
+    # cap_system
+    ${ESPCLAW_COMPONENTS}/claw_capabilities/cap_system/src/cap_system.c
+
     # cap_router_mgr
     ${ESPCLAW_COMPONENTS}/claw_capabilities/cap_router_mgr/src/cap_router_mgr.c
-
-    # cap_web_search — requires esp_http_client struct init, skip for now
-    # (can be migrated to use http_curl.c directly)
 
     # display_arbiter (shared display ownership tracking)
     ${ESPCLAW_COMPONENTS}/common/display_arbiter/display_arbiter.c
@@ -330,6 +350,7 @@ target_compile_options(esp-claw-desktop PRIVATE
 )
 
 # Desktop-only extension components
+set(SIMULATOR_BUILD ON)
 include(${CMAKE_SOURCE_DIR}/components/desktop/CMakeLists.txt)
 
 # Allow the sim to include its own dir as system include (for esp_ headers)

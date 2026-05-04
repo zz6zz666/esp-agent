@@ -4,4 +4,5 @@
 #pragma once
 
 #define portTICK_PERIOD_MS 1
-#define portNUM_PROCESSORS   8
+#include <unistd.h>
+#define portNUM_PROCESSORS   ((UBaseType_t)sysconf(_SC_NPROCESSORS_CONF))

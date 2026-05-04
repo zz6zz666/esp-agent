@@ -26,6 +26,7 @@ typedef uint32_t UBaseType_t;
 
 #define tskIDLE_PRIORITY 0
 #define tskNO_AFFINITY   (-1)
+#define portNUM_PROCESSORS ((UBaseType_t)sysconf(_SC_NPROCESSORS_CONF))
 
 #define portMAX_DELAY    UINT32_MAX
 #define pdMS_TO_TICKS(ms) ((TickType_t)(ms))
@@ -115,6 +116,32 @@ void vTaskDeleteWithCaps(TaskHandle_t task_handle);
 void vTaskDelay(TickType_t ticks);
 TaskHandle_t xTaskGetCurrentTaskHandle(void);
 TickType_t xTaskGetTickCount(void);
+
+/* ---- Runtime stats (used by cap_system get_cpu_usage) ---- */
+
+typedef enum {
+    eRunning = 0,
+    eReady,
+    eBlocked,
+    eSuspended,
+    eDeleted,
+} eTaskState;
+
+typedef struct {
+    TaskHandle_t xHandle;
+    const char *pcTaskName;
+    UBaseType_t xTaskNumber;
+    eTaskState eCurrentState;
+    UBaseType_t uxCurrentPriority;
+    UBaseType_t uxBasePriority;
+    uint32_t ulRunTimeCounter;
+    uint16_t usStackHighWaterMark;
+} TaskStatus_t;
+
+UBaseType_t uxTaskGetNumberOfTasks(void);
+UBaseType_t uxTaskGetSystemState(TaskStatus_t *pxTaskStatusArray,
+                                  UBaseType_t uxArraySize,
+                                  uint32_t *pulTotalRunTime);
 
 /* --- Queue API --- */
 

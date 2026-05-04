@@ -105,6 +105,21 @@ static inline struct arg_str *arg_str0(const char *shortopts,
     return a;
 }
 
+static inline struct arg_str *arg_str1(const char *shortopts,
+                                        const char *longopts,
+                                        const char *glossary,
+                                        const char *datatype)
+{
+    (void)glossary; (void)datatype;
+    struct arg_str *a = calloc(1, sizeof(*a));
+    if (a) {
+        a->hdr.type      = ARG_TYPE_STR;
+        a->hdr.shortopts = shortopts;
+        a->hdr.longopts  = longopts;
+    }
+    return a;
+}
+
 static inline struct arg_int *arg_int0(const char *shortopts,
                                         const char *longopts,
                                         const char *glossary,
