@@ -229,9 +229,9 @@ static void seed_defaults(const char *data_dir)
     get_defaults_dir(defaults_dir, sizeof(defaults_dir));
     if (access(defaults_dir, F_OK) != 0) return;
 
-    char config_path[PATH_MAX];
-    snprintf(config_path, sizeof(config_path), "%s/config.json", data_dir);
-    if (access(config_path, F_OK) == 0) return;
+    char skills_list[PATH_MAX];
+    snprintf(skills_list, sizeof(skills_list), "%s/skills/skills_list.json", data_dir);
+    if (access(skills_list, F_OK) == 0) return;
 
     ESP_LOGI(TAG, "Seeding defaults from %s", defaults_dir);
     copy_tree(defaults_dir, data_dir);
