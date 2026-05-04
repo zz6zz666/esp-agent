@@ -1762,7 +1762,7 @@ esp_err_t esp_lcd_touch_get_data(esp_lcd_touch_handle_t tp,
 }
 
 esp_err_t esp_lcd_touch_register_interrupt_callback(
-    esp_lcd_touch_handle_t tp, void (*cb)(void *))
+    esp_lcd_touch_handle_t tp, void (*cb)(esp_lcd_touch_handle_t))
 {
     if (!tp) return ESP_ERR_INVALID_ARG;
     tp->isr_cb = cb;
@@ -1771,7 +1771,7 @@ esp_err_t esp_lcd_touch_register_interrupt_callback(
 }
 
 esp_err_t esp_lcd_touch_register_interrupt_callback_with_data(
-    esp_lcd_touch_handle_t tp, void (*cb)(void *), void *arg)
+    esp_lcd_touch_handle_t tp, void (*cb)(esp_lcd_touch_handle_t), void *arg)
 {
     if (!tp) return ESP_ERR_INVALID_ARG;
     tp->isr_cb = cb;
