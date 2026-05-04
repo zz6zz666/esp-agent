@@ -788,7 +788,9 @@ int main(int argc, char **argv)
                 0xFFDF, false, 0,
                 DISPLAY_HAL_TEXT_ALIGN_CENTER, DISPLAY_HAL_TEXT_VALIGN_TOP);
             display_hal_draw_line(40, 48, w - 40, 48, 0x52AA);
-            display_hal_draw_text(16, 60, "Display: SDL2 320x240", 1,
+            char disp_info[48];
+            snprintf(disp_info, sizeof(disp_info), "Display: SDL2 %dx%d", w, h);
+            display_hal_draw_text(16, 60, disp_info, 1,
                 0xCE59, false, 0);
             display_hal_draw_text(16, 80, "Emote not available", 1,
                 0xCE59, false, 0);

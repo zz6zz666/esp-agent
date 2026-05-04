@@ -20,6 +20,7 @@
 
 #include "display_hal.h"
 #include "display_hal_input.h"
+#include "display_arbiter.h"
 #include "esp_err.h"
 #include "esp_lcd_touch.h"
 #include "esp_log.h"
@@ -267,10 +268,9 @@ esp_err_t display_hal_create(esp_lcd_panel_handle_t panel_handle,
     /* ---- Worker thread path: delegate to main thread ----
 
        Use the configured LCD size (s_ctx.width/height) rather than
-       the passed hardware params.  The Lua module passes the board's
-       hardware LCD size (320x240 from board_manager), but the Lua
-       display window should use the configurable virtual LCD size
-       (default 480x480, matching config.json). */
+       the passed hardware params.  The Lua module may pass the board's
+       hardware LCD size, but the Lua display window should use the
+       configurable virtual LCD size (default 480x480, matching config.json). */
 
     /* Store params and request main-thread creation */
     pthread_mutex_lock(&s_ctx.lifecycle_mutex);
@@ -783,8 +783,32 @@ esp_err_t display_hal_present(void)
 
         process_sdl_events();
     } else {
-        /* Worker thread (Lua): signal that a frame is ready and block
-           until the main loop renders it. */
+        /* Worker thread (Lua): if not already in Lua mode, trigger the
+           mode switch BEFORE signaling present.  The Lua drawing is on
+           the emote surface; after the switch the Lua surface is fresh
+           (black), so the script must redraw.  The first frame after
+           the switch will be black — subsequent frames render correctly. */
+        if (!s_ctx.lua_mode) {
+            /* Acquire display arbiter BEFORE the window switch so the
+               emote engine stops drawing immediately.  Without this,
+               emote's flush callback continues rendering onto the Lua
+               surface since the script never called display.init(). */
+            display_arbiter_acquire(DISPLAY_ARBITER_OWNER_LUA);
+
+            s_ctx.pending_switch = true;
+            s_ctx.pending_lua_target = true;
+            /* Wake main loop and wait for it to process the switch */
+            pthread_mutex_lock(&s_present_mutex);
+            g_present_pending = true;
+            pthread_cond_broadcast(&s_present_cond);
+            while (s_ctx.pending_switch) {
+                pthread_cond_wait(&s_present_cond, &s_present_mutex);
+            }
+            pthread_mutex_unlock(&s_present_mutex);
+        }
+
+        /* Signal that a frame is ready and block until the main loop
+           renders it. */
         pthread_mutex_lock(&s_present_mutex);
         g_present_pending = true;
         pthread_cond_broadcast(&s_present_cond);
