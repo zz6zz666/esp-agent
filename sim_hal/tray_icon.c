@@ -86,6 +86,13 @@ bool tray_icon_init(void)
 void tray_icon_set_sdl_window(void *hwnd)
 {
     s_sdl_hwnd = (HWND)hwnd;
+    /* Remove from taskbar — tray icon is the primary UI surface */
+    LONG_PTR ex_style = GetWindowLongPtrA(s_sdl_hwnd, GWL_EXSTYLE);
+    SetWindowLongPtrA(s_sdl_hwnd, GWL_EXSTYLE, ex_style | WS_EX_TOOLWINDOW);
+    /* Re-show to apply the style change */
+    ShowWindow(s_sdl_hwnd, SW_HIDE);
+    ShowWindow(s_sdl_hwnd, SW_SHOW);
+    SetForegroundWindow(s_sdl_hwnd);
 }
 
 void tray_icon_show_window(void)
