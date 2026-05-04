@@ -743,15 +743,38 @@ int display_hal_height(void) { return s_ctx.height; }
 
 esp_err_t display_hal_begin_frame(bool clear, uint16_t color565)
 {
-    /* Trigger switch to Lua-sized window (destroy+create on main thread) */
+    /* If not yet in Lua mode, block until the window is switched.
+     * The switch destroys the emote window, creates the Lua-sized window,
+     * and gives us a clean surface.  We MUST wait here so that the surface
+     * is the correct size before Lua draws anything. */
     if (!s_ctx.lua_mode) {
-        s_ctx.pending_switch = true;
-        s_ctx.pending_lua_target = true;
+        if (!pthread_equal(pthread_self(), s_main_thread)) {
+            /* Worker thread (Lua): acquire arbiter to stop emote drawing,
+             * then signal main thread to do the window switch. */
+            display_arbiter_acquire(DISPLAY_ARBITER_OWNER_LUA);
+
+            s_ctx.pending_switch = true;
+            s_ctx.pending_lua_target = true;
+
+            pthread_mutex_lock(&s_present_mutex);
+            g_present_pending = true;
+            pthread_cond_broadcast(&s_present_cond);
+
+            while (s_ctx.pending_switch) {
+                pthread_cond_wait(&s_present_cond, &s_present_mutex);
+            }
+            pthread_mutex_unlock(&s_present_mutex);
+        } else {
+            /* Main thread: just flag it; the present() main path will
+             * process the switch before rendering. */
+            s_ctx.pending_switch = true;
+            s_ctx.pending_lua_target = true;
+        }
     }
-    /* Do NOT clear old surface here — it's the wrong size until the main
-       thread processes the switch.  The new surface is cleared after creation. */
-    (void)clear;
-    (void)color565;
+
+    if (clear && s_ctx.surface) {
+        SDL_FillRect(s_ctx.surface, NULL, color565);
+    }
     s_ctx.frame_active = true;
     return ESP_OK;
 }
@@ -1265,21 +1288,19 @@ esp_err_t display_hal_present(void)
 
         process_sdl_events();
     } else {
-        /* Worker thread (Lua): if not already in Lua mode, trigger the
-           mode switch BEFORE signaling present.  The Lua drawing is on
-           the emote surface; after the switch the Lua surface is fresh
-           (black), so the script must redraw.  The first frame after
-           the switch will be black — subsequent frames render correctly. */
+        /* Worker thread (Lua): begin_frame() has already ensured the
+         * window switch happened before drawing, so we just signal the
+         * main thread to render the current surface. */
         if (!s_ctx.lua_mode) {
-            /* Acquire display arbiter BEFORE the window switch so the
-               emote engine stops drawing immediately.  Without this,
-               emote's flush callback continues rendering onto the Lua
-               surface since the script never called display.init(). */
+            /* Fallback: scripts that skip begin_frame go through here.
+             * Acquire arbiter and wait for window switch.  Drawing done
+             * on the old surface will appear on the emote window rather
+             * than the Lua window — the script should call begin_frame. */
             display_arbiter_acquire(DISPLAY_ARBITER_OWNER_LUA);
 
             s_ctx.pending_switch = true;
             s_ctx.pending_lua_target = true;
-            /* Wake main loop and wait for it to process the switch */
+
             pthread_mutex_lock(&s_present_mutex);
             g_present_pending = true;
             pthread_cond_broadcast(&s_present_cond);
