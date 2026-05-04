@@ -68,6 +68,9 @@ static char g_pid_file_path[PATH_MAX] = {0};
 /* display_sdl2.c extensions (not in display_hal.h) */
 extern bool display_hal_is_active(void);
 extern void *display_hal_get_native_window(void);
+extern void display_hal_hide_window(void);
+extern void display_hal_show_window(void);
+extern bool display_hal_title_minimize_hit(void);
 
 #if defined(PLATFORM_WINDOWS)
 # include "tray_icon.h"
@@ -952,6 +955,10 @@ int main(int argc, char **argv)
         /* Pump tray icon messages */
         tray_icon_pump();
 #endif
+        /* Custom title bar minimize button */
+        if (display_hal_title_minimize_hit()) {
+            display_hal_hide_window();
+        }
         display_hal_present();             /* always pump — processes lifecycle ops */
         if (display_hal_is_active()) {
             vTaskDelay(pdMS_TO_TICKS(16)); /* ~60 Hz when rendering */

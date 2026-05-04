@@ -42,6 +42,9 @@ static const char *TAG = "display_sdl2";
 /* ---- Font stack (multi-font fallback for emoji / symbols / CJK) ---- */
 #define MAX_FONT_STACK 4
 
+#define TITLE_BAR_H 20
+#define TITLE_BAR_BTN_W 20
+
 static const char *s_font_paths[MAX_FONT_STACK] = {0};
 static const char *s_font_labels[MAX_FONT_STACK] = {0};
 static int          s_font_path_count = 0;
@@ -130,6 +133,11 @@ typedef struct {
     int expected_w, expected_h; /* locked window size (reject external resize) */
     bool frame_active;
     bool lua_mode;            /* true = Lua window active, false = emote */
+    /* Custom title bar */
+    int  title_bar_h;        /* 0 = no title bar, TITLE_BAR_H = visible */
+    bool title_dragging;
+    int  title_drag_x, title_drag_y;
+    bool title_minimize_hit;
     bool pending_switch;      /* true = destroy+recreate window next present */
     bool pending_lua_target;  /* target mode for pending_switch */
     int clip_x, clip_y, clip_w, clip_h;
@@ -226,6 +234,39 @@ void *display_hal_get_native_window(void)
     return NULL;
 }
 
+bool display_hal_title_minimize_hit(void)
+{
+    bool hit = s_ctx.title_minimize_hit;
+    s_ctx.title_minimize_hit = false;
+    return hit;
+}
+
+void display_hal_hide_window(void)
+{
+    if (!s_ctx.window) return;
+#if defined(PLATFORM_WINDOWS)
+    SDL_SysWMinfo wm;
+    SDL_VERSION(&wm.version);
+    if (SDL_GetWindowWMInfo(s_ctx.window, &wm))
+        ShowWindow(wm.info.win.window, SW_HIDE);
+#else
+    SDL_MinimizeWindow(s_ctx.window);
+#endif
+}
+
+void display_hal_show_window(void)
+{
+    if (!s_ctx.window) return;
+#if defined(PLATFORM_WINDOWS)
+    SDL_SysWMinfo wm;
+    SDL_VERSION(&wm.version);
+    if (SDL_GetWindowWMInfo(s_ctx.window, &wm))
+        ShowWindow(wm.info.win.window, SW_SHOW);
+#else
+    SDL_ShowWindow(s_ctx.window);
+#endif
+}
+
 bool display_hal_quit_requested(void)
 {
     bool v = g_display_quit_requested;
@@ -289,6 +330,23 @@ static esp_err_t recreate_surface(int w, int h)
     return ESP_OK;
 }
 
+/* Create a borderless SDL window.  content_h is the LCD area height;
+ * title_bar_h is added to the total window height. */
+static SDL_Window *create_window_borderless(const char *title,
+                                             int content_w, int content_h,
+                                             int bar_h)
+{
+    Uint32 flags = SDL_WINDOW_SHOWN;
+    if (bar_h > 0) {
+        flags |= SDL_WINDOW_BORDERLESS;
+    }
+    return SDL_CreateWindow(title,
+                             SDL_WINDOWPOS_UNDEFINED,
+                             SDL_WINDOWPOS_UNDEFINED,
+                             content_w, content_h + bar_h,
+                             flags);
+}
+
 esp_err_t display_hal_create(esp_lcd_panel_handle_t panel_handle,
                              esp_lcd_panel_io_handle_t io_handle,
                              display_hal_panel_if_t panel_if,
@@ -317,16 +375,15 @@ esp_err_t display_hal_create(esp_lcd_panel_handle_t panel_handle,
         s_ctx.height = lcd_h;
         s_ctx.emu_width  = 320;
         s_ctx.emu_height = 240;
+        s_ctx.title_bar_h = TITLE_BAR_H;
 
         s_ctx.expected_w = s_ctx.emu_width;
-        s_ctx.expected_h = s_ctx.emu_height;
+        s_ctx.expected_h = s_ctx.emu_height + TITLE_BAR_H;
         s_ctx.lua_mode = false;
 
-        s_ctx.window = SDL_CreateWindow("esp-claw Desktop Simulator",
-                                         SDL_WINDOWPOS_UNDEFINED,
-                                         SDL_WINDOWPOS_UNDEFINED,
-                                         s_ctx.emu_width, s_ctx.emu_height,
-                                         SDL_WINDOW_SHOWN);
+        s_ctx.window = create_window_borderless("esp-claw Desktop Simulator",
+                                                 s_ctx.emu_width, s_ctx.emu_height,
+                                                 TITLE_BAR_H);
         if (!s_ctx.window) {
             ESP_LOGE(TAG, "SDL_CreateWindow failed: %s", SDL_GetError());
             SDL_Quit();
@@ -497,6 +554,20 @@ static bool process_sdl_events(void)
             break;
 
         case SDL_MOUSEMOTION:
+            /* Title bar drag */
+            if (s_ctx.title_dragging) {
+                int wx, wy;
+                SDL_GetWindowPosition(s_ctx.window, &wx, &wy);
+                SDL_SetWindowPosition(s_ctx.window,
+                    wx + ev.motion.x - s_ctx.title_drag_x,
+                    wy + ev.motion.y - s_ctx.title_drag_y);
+                break;
+            }
+            /* Title bar: don't forward hover to LCD */
+            if (s_ctx.title_bar_h > 0 && ev.motion.y < s_ctx.title_bar_h) {
+                break;
+            }
+            ev.motion.y -= s_ctx.title_bar_h;
             pthread_mutex_lock(&s_input.mutex);
             s_input.mouse.x = (int16_t)(ev.motion.x / s_input.scale_x);
             s_input.mouse.y = (int16_t)(ev.motion.y / s_input.scale_y);
@@ -511,6 +582,25 @@ static bool process_sdl_events(void)
         case SDL_MOUSEBUTTONDOWN:
         case SDL_MOUSEBUTTONUP: {
             bool pressed = (ev.type == SDL_MOUSEBUTTONDOWN);
+
+            /* Title bar clicks */
+            if (s_ctx.title_bar_h > 0 && ev.button.y < s_ctx.title_bar_h) {
+                if (pressed && ev.button.button == SDL_BUTTON_LEFT) {
+                    /* Minimize button area */
+                    if (ev.button.x >= s_ctx.surf_w - TITLE_BAR_BTN_W - 2) {
+                        s_ctx.title_minimize_hit = true;
+                    } else {
+                        s_ctx.title_dragging = true;
+                        s_ctx.title_drag_x = ev.button.x;
+                        s_ctx.title_drag_y = ev.button.y;
+                    }
+                } else if (!pressed) {
+                    s_ctx.title_dragging = false;
+                }
+                break;
+            }
+
+            ev.button.y -= s_ctx.title_bar_h;
             pthread_mutex_lock(&s_input.mutex);
             int16_t mx = (int16_t)(ev.button.x / s_input.scale_x);
             int16_t my = (int16_t)(ev.button.y / s_input.scale_y);
@@ -638,11 +728,10 @@ esp_err_t display_hal_present(void)
 
                 s_ctx.width  = lw;
                 s_ctx.height = lh;
+                s_ctx.title_bar_h = TITLE_BAR_H;
 
-                s_ctx.window = SDL_CreateWindow("esp-claw Lua Display",
-                                                 SDL_WINDOWPOS_UNDEFINED,
-                                                 SDL_WINDOWPOS_UNDEFINED,
-                                                 lw, lh, SDL_WINDOW_SHOWN);
+                s_ctx.window = create_window_borderless("esp-claw Lua Display",
+                                                         lw, lh, TITLE_BAR_H);
                 if (!s_ctx.window) {
                     ESP_LOGE(TAG, "Lifecycle create: SDL_CreateWindow(%dx%d) failed: %s",
                              lw, lh, SDL_GetError());
@@ -675,7 +764,7 @@ esp_err_t display_hal_present(void)
 
                 s_ctx.lua_mode = true;
                 s_ctx.expected_w = lw;
-                s_ctx.expected_h = lh;
+                s_ctx.expected_h = lh + TITLE_BAR_H;
 
                 pthread_mutex_lock(&s_input.mutex);
                 s_input.window_w = lw;
@@ -701,11 +790,10 @@ esp_err_t display_hal_present(void)
                 s_ctx.pending_switch = false;
 
                 /* Always re-create the emote window so emote engine can resume */
-                s_ctx.window = SDL_CreateWindow("esp-claw Desktop Simulator",
-                                                 SDL_WINDOWPOS_UNDEFINED,
-                                                 SDL_WINDOWPOS_UNDEFINED,
-                                                 s_ctx.emu_width, s_ctx.emu_height,
-                                                 SDL_WINDOW_SHOWN);
+                s_ctx.title_bar_h = TITLE_BAR_H;
+                s_ctx.window = create_window_borderless("esp-claw Desktop Simulator",
+                                                         s_ctx.emu_width, s_ctx.emu_height,
+                                                         TITLE_BAR_H);
                 if (!s_ctx.window) {
                     ESP_LOGE(TAG, "Lifecycle destroy: SDL_CreateWindow failed: %s",
                              SDL_GetError());
@@ -737,7 +825,7 @@ esp_err_t display_hal_present(void)
                 SDL_FillRect(s_ctx.surface, NULL, 0x0000);
 
                 s_ctx.expected_w = s_ctx.emu_width;
-                s_ctx.expected_h = s_ctx.emu_height;
+                s_ctx.expected_h = s_ctx.emu_height + TITLE_BAR_H;
 
                 pthread_mutex_lock(&s_input.mutex);
                 s_input.window_w = s_ctx.emu_width;
@@ -780,11 +868,8 @@ esp_err_t display_hal_present(void)
             const char *title = target_lua
                 ? "esp-claw Lua Display"
                 : "esp-claw Desktop Simulator";
-            s_ctx.window = SDL_CreateWindow(title,
-                                             SDL_WINDOWPOS_UNDEFINED,
-                                             SDL_WINDOWPOS_UNDEFINED,
-                                             new_w, new_h,
-                                             SDL_WINDOW_SHOWN);
+            s_ctx.title_bar_h = TITLE_BAR_H;
+            s_ctx.window = create_window_borderless(title, new_w, new_h, TITLE_BAR_H);
             if (!s_ctx.window) {
                 ESP_LOGE(TAG, "Mode switch: SDL_CreateWindow(%dx%d) failed: %s",
                          new_w, new_h, SDL_GetError());
@@ -819,7 +904,7 @@ esp_err_t display_hal_present(void)
 
             s_ctx.lua_mode = target_lua;
             s_ctx.expected_w = new_w;
-            s_ctx.expected_h = new_h;
+            s_ctx.expected_h = new_h + TITLE_BAR_H;
 
             /* Update input state for new window (1:1 scale) */
             pthread_mutex_lock(&s_input.mutex);
@@ -838,7 +923,42 @@ esp_err_t display_hal_present(void)
             SDL_UpdateTexture(s_ctx.texture, NULL,
                               s_ctx.surface->pixels, s_ctx.surf_w * 2);
             SDL_RenderClear(s_ctx.renderer);
-            SDL_RenderCopy(s_ctx.renderer, s_ctx.texture, NULL, NULL);
+
+            /* LCD content: rendered below the custom title bar */
+            SDL_Rect lcd_dst = {0, s_ctx.title_bar_h,
+                                s_ctx.surf_w, s_ctx.surf_h};
+            SDL_RenderCopy(s_ctx.renderer, s_ctx.texture, NULL, &lcd_dst);
+
+            /* Custom title bar (borderless window — no native chrome) */
+            if (s_ctx.title_bar_h > 0) {
+                int w = s_ctx.surf_w;
+                int h = s_ctx.title_bar_h;
+                SDL_Rect bar = {0, 0, w, h};
+                SDL_SetRenderDrawColor(s_ctx.renderer, 0x28, 0x28, 0x28, 255);
+                SDL_RenderFillRect(s_ctx.renderer, &bar);
+                /* Bottom edge separator */
+                SDL_SetRenderDrawColor(s_ctx.renderer, 0x55, 0x55, 0x55, 255);
+                SDL_RenderDrawLine(s_ctx.renderer, 0, h - 1, w, h - 1);
+                /* Minimize button area (top-right) */
+                int bx = w - TITLE_BAR_BTN_W - 2;
+                int by = 2;
+                int bw = TITLE_BAR_BTN_W;
+                int bh = h - 4;
+                SDL_Rect btn = {bx, by, bw, bh};
+                SDL_SetRenderDrawColor(s_ctx.renderer, 0x4a, 0x4a, 0x4a, 255);
+                SDL_RenderFillRect(s_ctx.renderer, &btn);
+                /* Downward triangle indicator (minimize) */
+                SDL_SetRenderDrawColor(s_ctx.renderer, 0xbb, 0xbb, 0xbb, 255);
+                int cx = bx + bw / 2;
+                int cy = by + bh / 2 + 1;
+                for (int dy = -2; dy <= 1; dy++) {
+                    int half = dy + 2;
+                    if (dy >= 0) half = 2 - dy + 1;
+                    if (half > 0) SDL_RenderDrawLine(s_ctx.renderer,
+                        cx - half, cy + dy, cx + half, cy + dy);
+                }
+            }
+
             SDL_RenderPresent(s_ctx.renderer);
         }
 
@@ -905,7 +1025,8 @@ esp_err_t display_hal_present_rect(int x, int y, int width, int height)
     if (!sub) return ESP_ERR_NO_MEM;
     SDL_UpdateTexture(s_ctx.texture, &r, sub->pixels, sub->pitch);
     SDL_RenderClear(s_ctx.renderer);
-    SDL_RenderCopy(s_ctx.renderer, s_ctx.texture, NULL, NULL);
+    SDL_Rect lcd_dst = {0, s_ctx.title_bar_h, s_ctx.surf_w, s_ctx.surf_h};
+    SDL_RenderCopy(s_ctx.renderer, s_ctx.texture, NULL, &lcd_dst);
     SDL_RenderPresent(s_ctx.renderer);
     SDL_FreeSurface(sub);
 
