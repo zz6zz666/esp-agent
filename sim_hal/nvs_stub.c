@@ -23,7 +23,7 @@
 
 #include "cJSON.h"
 
-#define NVS_DIR  ".esp-claw-sim"
+#define NVS_DIR  ".esp-agent"
 #define NVS_FILE "nvs.json"
 
 static char nvs_path[512] = {0};

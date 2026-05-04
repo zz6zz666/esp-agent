@@ -28,7 +28,7 @@ static void nvs_ensure_loaded(void)
     if (s_nvs_json) return;
 
     char path[512];
-    snprintf(path, sizeof(path), "%s/.esp-claw-sim/nvs.json", get_home_dir());
+    snprintf(path, sizeof(path), "%s/.esp-agent/nvs.json", get_home_dir());
     s_nvs_path = strdup(path);
 
     FILE *fp = fopen(path, "r");
@@ -112,6 +112,7 @@ esp_err_t nvs_get_blob(nvs_handle_t handle, const char *key, void *out_value, si
     if (!item || !cJSON_IsString(item)) return ESP_ERR_NOT_FOUND;
     /* Store blobs as base64-encoded strings for simplicity */
     size_t slen = strlen(item->valuestring);
+    if (!out_value) { *length = slen; return ESP_OK; }
     if (*length < slen) { *length = slen; return ESP_ERR_NO_MEM; }
     memcpy(out_value, item->valuestring, slen);
     *length = slen;

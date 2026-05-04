@@ -15,7 +15,6 @@
     { "id": "cap_lua_list",         "file": "cap_lua_list.md",         "summary": "List available Lua scripts.",                                    "cap_groups": ["cap_lua"] },
     { "id": "cap_lua_run",          "file": "cap_lua_run.md",          "summary": "Run Lua scripts and manage async jobs.",                         "cap_groups": ["cap_lua"] },
     { "id": "cap_lua_patterns",     "file": "cap_lua_patterns.md",     "summary": "Lua coding patterns and best practices.",                        "cap_groups": ["cap_lua"] },
-    { "id": "weather",              "file": "weather.md",              "summary": "Weather forecast queries.",                                      "cap_groups": ["cap_time"] },
     { "id": "lua_module_display",   "file": "lua_module_display.md",   "summary": "Draw text, shapes, images on screen (desktop: SDL2).",          "cap_groups": ["cap_lua"] },
     { "id": "lua_module_delay",     "file": "lua_module_delay.md",     "summary": "Wall-clock sleep: delay_ms / delay_us.",                         "cap_groups": ["cap_lua"] },
     { "id": "lua_module_storage",   "file": "lua_module_storage.md",   "summary": "File I/O on the host filesystem.",                               "cap_groups": ["cap_lua"] },

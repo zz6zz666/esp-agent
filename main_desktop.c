@@ -14,6 +14,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 
 #if defined(PLATFORM_WINDOWS)
@@ -46,13 +47,13 @@
 
 #define ESP_AGENT_VERSION "1.0.0"
 #if defined(PLATFORM_WINDOWS)
-/* On Windows, defaults ship alongside the executable */
 static void get_defaults_dir(char *buf, size_t bufsz)
 {
-    GetModuleFileNameA(NULL, buf, (DWORD)bufsz);
-    char *slash = strrchr(buf, '\\');
+    char exe_path[PATH_MAX];
+    GetModuleFileNameA(NULL, exe_path, sizeof(exe_path));
+    char *slash = strrchr(exe_path, '\\');
     if (slash) *slash = '\0';
-    snprintf(buf + strlen(buf), bufsz - strlen(buf), "\\defaults");
+    snprintf(buf, bufsz, "%s\\defaults", exe_path);
 }
 #else
 #define DEFAULTS_DIR "/usr/share/esp-agent/defaults"
@@ -227,11 +228,18 @@ static void seed_defaults(const char *data_dir)
 {
     char defaults_dir[PATH_MAX];
     get_defaults_dir(defaults_dir, sizeof(defaults_dir));
-    if (access(defaults_dir, F_OK) != 0) return;
+    ESP_LOGI(TAG, "Seed defaults: source=%s", defaults_dir);
+    if (access(defaults_dir, F_OK) != 0) {
+        ESP_LOGW(TAG, "Seed defaults: source dir not found, skipping");
+        return;
+    }
 
     char skills_list[PATH_MAX];
     snprintf(skills_list, sizeof(skills_list), "%s/skills/skills_list.json", data_dir);
-    if (access(skills_list, F_OK) == 0) return;
+    if (access(skills_list, F_OK) == 0) {
+        ESP_LOGI(TAG, "Seed defaults: already seeded (%s exists)", skills_list);
+        return;
+    }
 
     ESP_LOGI(TAG, "Seeding defaults from %s", defaults_dir);
     copy_tree(defaults_dir, data_dir);
@@ -910,6 +918,26 @@ int main(int argc, char **argv)
 
     /* Register desktop input Lua module (before modules lock) */
     lua_module_input_register();
+
+#if defined(PLATFORM_WINDOWS)
+    if (!getenv("TZ")) {
+        TIME_ZONE_INFORMATION tzi;
+        if (GetTimeZoneInformation(&tzi) != TIME_ZONE_ID_INVALID) {
+            int offset_min = (int)tzi.Bias;
+            char tz_buf[32];
+            if (offset_min % 60 == 0)
+                snprintf(tz_buf, sizeof(tz_buf), "UTC%d", offset_min / 60);
+            else
+                snprintf(tz_buf, sizeof(tz_buf), "UTC%d:%02d", offset_min / 60, abs(offset_min) % 60);
+            char tz_env[64];
+            snprintf(tz_env, sizeof(tz_env), "TZ=%s", tz_buf);
+            if (_putenv(tz_env) == 0) {
+                tzset();
+                ESP_LOGI(TAG, "Auto-detected timezone: %s", tz_buf);
+            }
+        }
+    }
+#endif
 
     esp_err_t err = app_claw_start(&config, &paths);
     if (err != ESP_OK) {

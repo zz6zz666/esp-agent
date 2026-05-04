@@ -41,7 +41,7 @@
 static const char *TAG = "display_sdl2";
 
 /* ---- Font stack (multi-font fallback for emoji / symbols / CJK) ---- */
-#define MAX_FONT_STACK 4
+#define MAX_FONT_STACK 6
 
 #define TITLE_BAR_H 20
 #define TITLE_BAR_BTN_W 20
@@ -98,6 +98,9 @@ static void discover_fonts(void)
     try_font_path(exe_dir, "NotoColorEmoji.ttf",  "Noto Color Emoji");
     try_font_path(exe_dir, "arial.ttf",            "Arial");
     try_font_path(exe_dir, "segoeui.ttf",          "Segoe UI");
+    try_font_path(exe_dir, "seguisym.ttf",         "Segoe UI Symbol");
+    try_font_path(exe_dir, "msyh.ttc",             "Microsoft YaHei");
+    try_font_path(exe_dir, "seguiemj.ttf",         "Segoe UI Emoji");
 
     /* 2. System fonts */
     const char *windir = getenv("WINDIR");
@@ -106,6 +109,8 @@ static void discover_fonts(void)
     snprintf(sysdir, sizeof(sysdir), "%s\\Fonts", windir);
     try_font_path(sysdir, "arial.ttf",            "Arial");
     try_font_path(sysdir, "segoeui.ttf",           "Segoe UI");
+    try_font_path(sysdir, "seguisym.ttf",          "Segoe UI Symbol");
+    try_font_path(sysdir, "msyh.ttc",              "Microsoft YaHei");
     try_font_path(sysdir, "seguiemj.ttf",          "Segoe UI Emoji");
 #else
     /* 1. fonts/ alongside the executable (if realpath works) */
@@ -125,7 +130,8 @@ typedef struct {
     SDL_Window   *window;
     SDL_Renderer *renderer;
     SDL_Texture  *texture;
-    SDL_Surface  *surface;    /* RGB565 back-buffer (size = current mode) */
+    SDL_Surface  *surface;    /* display front-buffer: read by main thread render */
+    SDL_Surface  *surface_draw; /* Lua draw back-buffer: written by worker thread */
     int width;                /* configured LCD size (Agent/Lua visible) */
     int height;
     int emu_width;            /* emote size (fixed 320) */
@@ -309,15 +315,26 @@ static inline void rgb565_to_rgb(uint16_t c, uint8_t *r, uint8_t *g, uint8_t *b)
     *b = (uint8_t)((c << 3) & 0xF8);
 }
 
+/* Return the surface drawing primitives should write to.
+ * Lua mode uses a separate draw buffer to avoid tearing;
+ * emote mode draws directly to the display surface. */
+static inline SDL_Surface *draw_surface(void)
+{
+    if (s_ctx.lua_mode && s_ctx.surface_draw)
+        return s_ctx.surface_draw;
+    return s_ctx.surface;
+}
+
 static void put_pixel(int x, int y, uint16_t color)
 {
-    if (!s_ctx.surface) return;
+    SDL_Surface *dst = draw_surface();
+    if (!dst) return;
     if (x < 0 || x >= s_ctx.surf_w || y < 0 || y >= s_ctx.surf_h) return;
     if (s_ctx.clip_enabled) {
         if (x < s_ctx.clip_x || x >= s_ctx.clip_x + s_ctx.clip_w ||
             y < s_ctx.clip_y || y >= s_ctx.clip_y + s_ctx.clip_h) return;
     }
-    uint16_t *pixels = (uint16_t *)s_ctx.surface->pixels;
+    uint16_t *pixels = (uint16_t *)dst->pixels;
     pixels[y * s_ctx.surf_w + x] = color;
 }
 
@@ -328,6 +345,7 @@ static void put_pixel(int x, int y, uint16_t color)
 static esp_err_t recreate_surface(int w, int h)
 {
     if (s_ctx.surface) SDL_FreeSurface(s_ctx.surface);
+    if (s_ctx.surface_draw) { SDL_FreeSurface(s_ctx.surface_draw); s_ctx.surface_draw = NULL; }
     if (s_ctx.texture) SDL_DestroyTexture(s_ctx.texture);
 
     s_ctx.surface = SDL_CreateRGBSurfaceWithFormat(0, w, h, 16,
@@ -709,6 +727,7 @@ esp_err_t display_hal_destroy(void)
     if (pthread_equal(pthread_self(), s_main_thread)) {
         if (s_ctx.texture)  { SDL_DestroyTexture(s_ctx.texture);   s_ctx.texture = NULL; }
         if (s_ctx.surface)  { SDL_FreeSurface(s_ctx.surface);      s_ctx.surface = NULL; }
+        if (s_ctx.surface_draw) { SDL_FreeSurface(s_ctx.surface_draw); s_ctx.surface_draw = NULL; }
         if (s_ctx.renderer) { SDL_DestroyRenderer(s_ctx.renderer); s_ctx.renderer = NULL; }
         if (s_ctx.window)   { SDL_DestroyWindow(s_ctx.window);     s_ctx.window = NULL; }
         s_ctx.surf_w = 0;
@@ -781,8 +800,13 @@ esp_err_t display_hal_begin_frame(bool clear, uint16_t color565)
         }
     }
 
-    if (clear && s_ctx.surface) {
-        SDL_FillRect(s_ctx.surface, NULL, color565);
+    if (s_ctx.lua_mode && !s_ctx.surface_draw) {
+        s_ctx.surface_draw = SDL_CreateRGBSurfaceWithFormat(
+            0, s_ctx.surf_w, s_ctx.surf_h, 16, SDL_PIXELFORMAT_RGB565);
+    }
+    if (clear) {
+        SDL_Surface *cs = draw_surface();
+        if (cs) SDL_FillRect(cs, NULL, color565);
     }
     s_ctx.frame_active = true;
     return ESP_OK;
@@ -1000,6 +1024,7 @@ esp_err_t display_hal_present(void)
                 /* create: destroy current window, create new one at Lua LCD size */
                 if (s_ctx.texture)  { SDL_DestroyTexture(s_ctx.texture);   s_ctx.texture = NULL; }
                 if (s_ctx.surface)  { SDL_FreeSurface(s_ctx.surface);      s_ctx.surface = NULL; }
+                if (s_ctx.surface_draw) { SDL_FreeSurface(s_ctx.surface_draw); s_ctx.surface_draw = NULL; }
                 if (s_ctx.renderer) { SDL_DestroyRenderer(s_ctx.renderer); s_ctx.renderer = NULL; }
                 if (s_ctx.window)   { SDL_DestroyWindow(s_ctx.window);     s_ctx.window = NULL; }
                 s_ctx.frame_active = false;
@@ -1074,6 +1099,7 @@ esp_err_t display_hal_present(void)
                 if (s_ctx.window) {
                     if (s_ctx.texture)  { SDL_DestroyTexture(s_ctx.texture);   s_ctx.texture = NULL; }
                     if (s_ctx.surface)  { SDL_FreeSurface(s_ctx.surface);      s_ctx.surface = NULL; }
+                    if (s_ctx.surface_draw) { SDL_FreeSurface(s_ctx.surface_draw); s_ctx.surface_draw = NULL; }
                     if (s_ctx.renderer) { SDL_DestroyRenderer(s_ctx.renderer); s_ctx.renderer = NULL; }
                     if (s_ctx.window)   { SDL_DestroyWindow(s_ctx.window);     s_ctx.window = NULL; }
                 }
@@ -1172,6 +1198,7 @@ esp_err_t display_hal_present(void)
             /* Destroy current window and all associated resources */
             if (s_ctx.texture)  { SDL_DestroyTexture(s_ctx.texture);   s_ctx.texture = NULL; }
             if (s_ctx.surface)  { SDL_FreeSurface(s_ctx.surface);      s_ctx.surface = NULL; }
+            if (s_ctx.surface_draw) { SDL_FreeSurface(s_ctx.surface_draw); s_ctx.surface_draw = NULL; }
             if (s_ctx.renderer) { SDL_DestroyRenderer(s_ctx.renderer); s_ctx.renderer = NULL; }
             if (s_ctx.window)   { SDL_DestroyWindow(s_ctx.window);     s_ctx.window = NULL; }
             s_ctx.frame_active = false;
@@ -1319,6 +1346,13 @@ esp_err_t display_hal_present(void)
             pthread_mutex_unlock(&s_present_mutex);
         }
 
+        /* Swap draw buffer to display surface atomically */
+        if (s_ctx.lua_mode && s_ctx.surface_draw) {
+            SDL_Surface *tmp = s_ctx.surface;
+            s_ctx.surface = s_ctx.surface_draw;
+            s_ctx.surface_draw = tmp;
+        }
+
         /* Signal that a frame is ready and block until the main loop
            renders it. */
         pthread_mutex_lock(&s_present_mutex);
@@ -1382,7 +1416,7 @@ esp_err_t display_hal_get_animation_info(display_hal_animation_info_t *info)
 
 esp_err_t display_hal_clear(uint16_t color565)
 {
-    SDL_FillRect(s_ctx.surface, NULL, color565);
+    SDL_FillRect(draw_surface(), NULL, color565);
     return ESP_OK;
 }
 
@@ -1405,7 +1439,7 @@ esp_err_t display_hal_clear_clip_rect(void)
 esp_err_t display_hal_fill_rect(int x, int y, int w, int h, uint16_t color565)
 {
     SDL_Rect r = { x, y, w, h };
-    SDL_FillRect(s_ctx.surface, &r, color565);
+    SDL_FillRect(draw_surface(), &r, color565);
     return ESP_OK;
 }
 
@@ -2010,10 +2044,10 @@ esp_err_t display_hal_draw_text(int x, int y, const char *text, uint8_t font_siz
 
         if (has_bg) {
             SDL_Rect bg_rect = { cx, y, glyph->w, glyph->h };
-            SDL_FillRect(s_ctx.surface, &bg_rect, bg_color);
+            SDL_FillRect(draw_surface(), &bg_rect, bg_color);
         }
         SDL_Rect dst = { cx, y, glyph->w, glyph->h };
-        SDL_BlitSurface(glyph, NULL, s_ctx.surface, &dst);
+        SDL_BlitSurface(glyph, NULL, draw_surface(), &dst);
         cx += glyph->w;
     }
     return ESP_OK;
