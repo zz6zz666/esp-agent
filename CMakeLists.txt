@@ -36,6 +36,7 @@ set(SIM_SRCS
     ${SIM_HAL_DIR}/esp_lcd_panel_stub.c
     ${SIM_HAL_DIR}/esp_mmap_assets_stub.c
     ${SIM_HAL_DIR}/lv_font_stub.c
+    $<$<BOOL:${WIN32}>:${SIM_HAL_DIR}/tray_icon.c>
 )
 
 # ---- external deps (emote engine) ----

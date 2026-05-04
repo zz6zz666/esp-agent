@@ -65,6 +65,11 @@ static char g_pid_file_path[PATH_MAX] = {0};
 
 /* display_sdl2.c extensions (not in display_hal.h) */
 extern bool display_hal_is_active(void);
+extern void *display_hal_get_native_window(void);
+
+#if defined(PLATFORM_WINDOWS)
+# include "tray_icon.h"
+#endif
 
 /* ---- helpers ---- */
 
@@ -813,6 +818,17 @@ int main(int argc, char **argv)
         if (d_err != ESP_OK) {
             ESP_LOGW(TAG, "Failed to create display: %s", esp_err_to_name(d_err));
         }
+#if defined(PLATFORM_WINDOWS)
+        /* Initialize system tray icon (after SDL window is created) */
+        if (display_hal_is_active()) {
+            void *native_hwnd = display_hal_get_native_window();
+            if (native_hwnd) {
+                tray_icon_init();
+                tray_icon_set_sdl_window(native_hwnd);
+                ESP_LOGI(TAG, "System tray icon initialized");
+            }
+        }
+#endif
     } else {
         ESP_LOGI(TAG, "SDL2 display skipped per config");
     }
@@ -902,6 +918,15 @@ int main(int argc, char **argv)
 
     /* Keep main thread alive, handle display present and events */
     while (s_running) {
+#if defined(PLATFORM_WINDOWS)
+        /* Check tray icon quit request */
+        if (tray_icon_quit_requested()) {
+            s_running = false;
+            break;
+        }
+        /* Pump tray icon messages */
+        tray_icon_pump();
+#endif
         if (display_hal_is_active()) {
             display_hal_present();
             vTaskDelay(pdMS_TO_TICKS(16)); /* ~60 Hz */
@@ -911,6 +936,9 @@ int main(int argc, char **argv)
     }
 
     /* Cleanup */
+#if defined(PLATFORM_WINDOWS)
+    tray_icon_cleanup();
+#endif
     display_hal_destroy();
     {
         char sock_path[PATH_MAX];

@@ -26,6 +26,7 @@
 #endif
 
 #include <SDL2/SDL.h>
+#include <SDL2/SDL_syswm.h>
 #include <SDL2/SDL_ttf.h>
 
 #include "display_hal.h"
@@ -171,6 +172,18 @@ void display_hal_mark_frame_ready(void)
 bool display_hal_is_active(void)
 {
     return s_ctx.window != NULL;
+}
+
+void *display_hal_get_native_window(void)
+{
+    if (!s_ctx.window) return NULL;
+#if defined(PLATFORM_WINDOWS)
+    SDL_SysWMinfo wm_info;
+    SDL_VERSION(&wm_info.version);
+    if (SDL_GetWindowWMInfo(s_ctx.window, &wm_info))
+        return (void *)wm_info.info.win.window;
+#endif
+    return NULL;
 }
 
 bool display_hal_quit_requested(void)
