@@ -92,8 +92,8 @@ Source: "C:\msys64\mingw64\bin\libnghttp3-9.dll"; DestDir: "{app}"; Flags: ignor
 Source: "C:\msys64\mingw64\bin\libngtcp2-16.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "C:\msys64\mingw64\bin\libngtcp2_crypto_ossl-0.dll"; DestDir: "{app}"; Flags: ignoreversion
 
-; Optional: fonts directory alongside the exe
-; (DejaVuSans.ttf, NotoColorEmoji.ttf, etc.)
+; Emote engine assets (boot animation)
+Source: "..\sim_hal\assets\284_240\*"; DestDir: "{app}\assets\284_240"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#MyAppName} Agent"; Filename: "{app}\{#MyAgentExeName}"; Parameters: "--foreground"; Comment: "Start esp-agent desktop simulator"

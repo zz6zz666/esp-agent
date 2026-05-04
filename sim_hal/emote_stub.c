@@ -23,23 +23,46 @@
 #include "display_arbiter.h"
 #include "display_hal.h"
 
+#if defined(PLATFORM_WINDOWS)
+# include "platform.h"
+#endif
+
 /* display_sdl2.c extension — signals main loop that a frame is ready */
 extern void display_hal_mark_frame_ready(void);
 
 static const char *TAG = "app_emote";
 
 /* Try installed path first, fall back to dev-relative path */
-#define EMOTE_ASSETS_DIR_DEV      "sim_hal/assets/284_240"
-#define EMOTE_ASSETS_DIR_INSTALLED "/usr/share/esp-agent/assets/284_240"
+#if defined(PLATFORM_WINDOWS)
+# define EMOTE_ASSETS_DIR_DEV      "sim_hal/assets/284_240"
+# define EMOTE_ASSETS_DIR_INSTALLED "assets/284_240"
+#else
+# define EMOTE_ASSETS_DIR_DEV      "sim_hal/assets/284_240"
+# define EMOTE_ASSETS_DIR_INSTALLED "/usr/share/esp-agent/assets/284_240"
+#endif
 
 #include <sys/stat.h>
 
 static const char *emote_get_assets_dir(void)
 {
     struct stat st;
+    /* Try installed path first */
     if (stat(EMOTE_ASSETS_DIR_INSTALLED, &st) == 0 && S_ISDIR(st.st_mode)) {
         return EMOTE_ASSETS_DIR_INSTALLED;
     }
+#if defined(PLATFORM_WINDOWS)
+    /* On Windows, try exe-relative paths */
+    {
+        char exe_dir[512];
+        if (platform_get_exe_dir(exe_dir, sizeof(exe_dir))) {
+            char buf[512];
+            snprintf(buf, sizeof(buf), "%s\\%s", exe_dir, EMOTE_ASSETS_DIR_INSTALLED);
+            if (stat(buf, &st) == 0 && S_ISDIR(st.st_mode)) return strdup(buf);
+            snprintf(buf, sizeof(buf), "%s\\%s", exe_dir, EMOTE_ASSETS_DIR_DEV);
+            if (stat(buf, &st) == 0 && S_ISDIR(st.st_mode)) return strdup(buf);
+        }
+    }
+#endif
     return EMOTE_ASSETS_DIR_DEV;
 }
 
