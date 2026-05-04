@@ -415,26 +415,39 @@ static void apply_window_effects(SDL_Window *win)
     }
 
 #if defined(PLATFORM_WINDOWS)
-    /* Subtle rounded corners + shadow via DWM (Windows only) */
-    SDL_SysWMinfo wm;
-    SDL_VERSION(&wm.version);
-    if (SDL_GetWindowWMInfo(win, &wm)) {
-        HWND hwnd = wm.info.win.window;
+    if (s_ctx.title_bar_h > 0) {
+        /* Subtle rounded corners + shadow via DWM (Windows only) */
+        SDL_SysWMinfo wm;
+        SDL_VERSION(&wm.version);
+        if (SDL_GetWindowWMInfo(win, &wm)) {
+            HWND hwnd = wm.info.win.window;
 
-        /* Extend frame into client to enable DWM shadow on borderless windows.
-           A 1px margin triggers the native shadow render path. */
-        MARGINS m = {1, 1, 1, 1};
-        DwmExtendFrameIntoClientArea(hwnd, &m);
+            /* Extend frame into client to enable DWM shadow on borderless windows.
+               A 1px margin triggers the native shadow render path. */
+            MARGINS m = {1, 1, 1, 1};
+            DwmExtendFrameIntoClientArea(hwnd, &m);
 
-        /* Rounded corners (Windows 11: DWMWCP_ROUND=2, DWMWCP_ROUNDSMALL=3).
-           DWMWA_WINDOW_CORNER_PREFERENCE = 33.
-           The call silently fails on Windows 10 — that's fine. */
-        DWORD corner = 3; /* DWMWCP_ROUNDSMALL — very mild rounding */
-        DwmSetWindowAttribute(hwnd, 33, &corner, sizeof(corner));
+            /* Rounded corners (Windows 11: DWMWCP_ROUND=2, DWMWCP_ROUNDSMALL=3).
+               DWMWA_WINDOW_CORNER_PREFERENCE = 33.
+               The call silently fails on Windows 10 — that's fine. */
+            DWORD corner = 3; /* DWMWCP_ROUNDSMALL — very mild rounding */
+            DwmSetWindowAttribute(hwnd, 33, &corner, sizeof(corner));
 
-        /* Signal DWM to recalculate window appearance */
-        SetWindowPos(hwnd, NULL, 0, 0, 0, 0,
-                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+            /* Signal DWM to recalculate window appearance */
+            SetWindowPos(hwnd, NULL, 0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+        }
+    }
+    /* Lua borderless popup: add WS_EX_APPWINDOW to show taskbar button */
+    if (s_ctx.lua_mode) {
+        SDL_SysWMinfo wm;
+        SDL_VERSION(&wm.version);
+        if (SDL_GetWindowWMInfo(win, &wm)) {
+            HWND hwnd = wm.info.win.window;
+            LONG exstyle = GetWindowLong(hwnd, GWL_EXSTYLE);
+            exstyle |= WS_EX_APPWINDOW;
+            SetWindowLong(hwnd, GWL_EXSTYLE, exstyle);
+        }
     }
 #endif
 }
@@ -1050,6 +1063,7 @@ esp_err_t display_hal_present(void)
                     goto lifecycle_done;
                 }
                 SDL_SetWindowPosition(s_ctx.window, wx, wy);
+                s_ctx.lua_mode = true;
                 apply_window_effects(s_ctx.window);
 
                 if (s_ctx.always_hide) {
@@ -1079,7 +1093,6 @@ esp_err_t display_hal_present(void)
                 }
                 SDL_FillRect(s_ctx.surface, NULL, 0x0000);
 
-                s_ctx.lua_mode = true;
                 s_ctx.expected_w = lw;
                 s_ctx.expected_h = lh + TITLE_BAR_H;
 
@@ -1221,6 +1234,7 @@ esp_err_t display_hal_present(void)
                 return ESP_FAIL;
             }
             SDL_SetWindowPosition(s_ctx.window, wx, wy);
+            s_ctx.lua_mode = target_lua;
             apply_window_effects(s_ctx.window);
 
             if (target_lua && s_ctx.always_hide) {
@@ -1252,7 +1266,6 @@ esp_err_t display_hal_present(void)
             /* Clear the new surface to black */
             SDL_FillRect(s_ctx.surface, NULL, 0x0000);
 
-            s_ctx.lua_mode = target_lua;
             s_ctx.expected_w = new_w;
             s_ctx.expected_h = new_h + TITLE_BAR_H;
 
