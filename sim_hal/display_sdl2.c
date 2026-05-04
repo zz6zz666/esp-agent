@@ -20,13 +20,22 @@
 
 static const char *TAG = "display_sdl2";
 
+/* ---- Font stack (multi-font fallback for emoji / symbols / CJK) ---- */
+#define MAX_FONT_STACK 4
+
+static const char *s_font_paths[MAX_FONT_STACK] = {0};
+static const char *s_font_labels[MAX_FONT_STACK] = {0};
+static int          s_font_path_count = 0;
+static TTF_Font    *s_font_stack[MAX_FONT_STACK] = {0};
+static int          s_font_stack_count = 0;
+static int          s_font_stack_ptsize = 0;
+
 /* ---- Internal state ---- */
 typedef struct {
     SDL_Window   *window;
     SDL_Renderer *renderer;
     SDL_Texture  *texture;
     SDL_Surface  *surface;    /* RGB565 back-buffer */
-    TTF_Font     *font;       /* TTF font for text rendering */
     int width;
     int height;
     bool frame_active;
@@ -44,6 +53,10 @@ static bool s_ttf_ok = false;
 /* forward declarations */
 esp_err_t display_hal_destroy(void);
 static volatile bool g_display_quit_requested = false;
+static void font_stack_close(void);
+static int  font_stack_load(int ptsize);
+static TTF_Font *font_for_codepoint(Uint32 cp);
+static Uint32 utf8_decode(const char **p);
 
 void display_hal_mark_frame_ready(void)
 {
@@ -157,18 +170,43 @@ esp_err_t display_hal_create(esp_lcd_panel_handle_t panel_handle,
         return ESP_FAIL;
     }
 
-    /* TTF font for text rendering (Unicode / Chinese support) */
+    /* TTF font stack for text rendering (CJK + emoji + symbols fallback) */
     if (TTF_Init() < 0) {
         ESP_LOGW(TAG, "TTF_Init failed: %s", TTF_GetError());
         s_ttf_ok = false;
     } else {
-        s_ctx.font = TTF_OpenFont("/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc", 16);
-        if (!s_ctx.font) {
-            ESP_LOGW(TAG, "TTF_OpenFont failed: %s — text will not render", TTF_GetError());
-            s_ttf_ok = false;
-        } else {
-            ESP_LOGI(TAG, "TTF font loaded: WQY ZenHei");
+        /* Register font files in priority order.  The first font that provides
+           a glyph is used; later fonts act as fallback for missing codepoints. */
+        struct {
+            const char *path;
+            const char *label;
+        } candidates[] = {
+            { "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",       "WQY ZenHei" },
+            { "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",    "DejaVu Sans" },
+            { "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",  "Noto Color Emoji" },
+        };
+        int n = sizeof(candidates) / sizeof(candidates[0]);
+
+        for (int i = 0; i < n && s_font_path_count < MAX_FONT_STACK; i++) {
+            TTF_Font *test = TTF_OpenFont(candidates[i].path, 16);
+            if (test) {
+                TTF_CloseFont(test);
+                s_font_paths[s_font_path_count]     = candidates[i].path;
+                s_font_labels[s_font_path_count]    = candidates[i].label;
+                s_font_path_count++;
+            } else {
+                ESP_LOGW(TAG, "Font not found, skipping: %s (%s)",
+                         candidates[i].label, candidates[i].path);
+            }
+        }
+
+        if (s_font_path_count > 0) {
             s_ttf_ok = true;
+            font_stack_load(16);
+            ESP_LOGI(TAG, "TTF font stack loaded (%d fonts)", s_font_path_count);
+        } else {
+            ESP_LOGW(TAG, "No TTF fonts found — text will not render");
+            s_ttf_ok = false;
         }
     }
 
@@ -528,34 +566,140 @@ esp_err_t display_hal_fill_triangle(int x1, int y1, int x2, int y2,
     return ESP_OK;
 }
 
-/* ---- Text (SDL2_ttf, WQY ZenHei) ---- */
+/* ---- Text (SDL2_ttf, font-stack fallback for emoji/symbols/CJK) ---- */
 
-static TTF_Font *get_font(int ptsize)
+static void font_stack_close(void)
 {
-    static int cached_ptsize = 0;
-    if (!s_ttf_ok) return NULL;
-    if (s_ctx.font && ptsize == cached_ptsize) return s_ctx.font;
-    if (s_ctx.font) TTF_CloseFont(s_ctx.font);
-    s_ctx.font = TTF_OpenFont("/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc", ptsize);
-    cached_ptsize = ptsize;
-    return s_ctx.font;
+    for (int i = 0; i < s_font_stack_count; i++) {
+        if (s_font_stack[i]) TTF_CloseFont(s_font_stack[i]);
+    }
+    s_font_stack_count = 0;
+    s_font_stack_ptsize = 0;
+}
+
+static int font_stack_load(int ptsize)
+{
+    if (s_font_stack_count > 0 && ptsize == s_font_stack_ptsize)
+        return s_font_stack_count;
+
+    font_stack_close();
+    s_font_stack_ptsize = ptsize;
+
+    for (int i = 0; i < s_font_path_count; i++) {
+        TTF_Font *f = TTF_OpenFont(s_font_paths[i], ptsize);
+        if (f) {
+            s_font_stack[s_font_stack_count++] = f;
+        }
+    }
+    return s_font_stack_count;
+}
+
+static TTF_Font *font_for_codepoint(Uint32 cp)
+{
+    /* For supplementary-plane characters (real emoji: U+1Fxxx, etc.),
+       try the last font (color emoji) first so emojis render in colour
+       instead of falling back to a monochrome glyph in an earlier font. */
+    if (cp > 0xFFFF && s_font_stack_count > 0) {
+        TTF_Font *emoji = s_font_stack[s_font_stack_count - 1];
+        if (TTF_GlyphIsProvided32(emoji, cp))
+            return emoji;
+    }
+
+    for (int i = 0; i < s_font_stack_count; i++) {
+        if (TTF_GlyphIsProvided32(s_font_stack[i], cp))
+            return s_font_stack[i];
+    }
+    return s_font_stack_count > 0 ? s_font_stack[0] : NULL;
+}
+
+/* Expected line height for the current font-stack point size. */
+static int font_stack_line_height(void)
+{
+    if (s_font_stack_count == 0) return 16;
+    return TTF_FontHeight(s_font_stack[0]);
+}
+
+/* Decode one UTF-8 codepoint, advance *p past the consumed bytes. */
+static Uint32 utf8_decode(const char **p)
+{
+    const unsigned char *s = (const unsigned char *)*p;
+    Uint32 cp;
+
+    if ((s[0] & 0x80) == 0) {
+        cp = s[0];
+        *p += 1;
+    } else if ((s[0] & 0xE0) == 0xC0) {
+        cp = ((Uint32)(s[0] & 0x1F) << 6) | (Uint32)(s[1] & 0x3F);
+        *p += 2;
+    } else if ((s[0] & 0xF0) == 0xE0) {
+        cp = ((Uint32)(s[0] & 0x0F) << 12)
+           | ((Uint32)(s[1] & 0x3F) << 6)
+           |  (Uint32)(s[2] & 0x3F);
+        *p += 3;
+    } else if ((s[0] & 0xF8) == 0xF0) {
+        cp = ((Uint32)(s[0] & 0x07) << 18)
+           | ((Uint32)(s[1] & 0x3F) << 12)
+           | ((Uint32)(s[2] & 0x3F) << 6)
+           |  (Uint32)(s[3] & 0x3F);
+        *p += 4;
+    } else {
+        cp = 0xFFFD;  /* replacement character */
+        *p += 1;
+    }
+    return cp;
 }
 
 esp_err_t display_hal_measure_text(const char *text, uint8_t font_size,
                                     uint16_t *out_w, uint16_t *out_h)
 {
     if (!text || !out_w || !out_h) return ESP_ERR_INVALID_ARG;
-    if (!s_ctx.font && !get_font(16)) {
+
+    int ptsize = font_size * 16;
+    if (font_stack_load(ptsize) == 0) {
         *out_w = (uint16_t)(strlen(text) * 8 * font_size);
         *out_h = (uint16_t)(16 * font_size);
         return ESP_OK;
     }
-    TTF_Font *f = get_font(font_size * 16);
-    if (!f) return ESP_ERR_INVALID_STATE;
-    int w = 0, h = 0;
-    if (TTF_SizeUTF8(f, text, &w, &h) < 0) return ESP_ERR_INVALID_STATE;
-    *out_w = (uint16_t)w;
-    *out_h = (uint16_t)h;
+
+    int total_w = 0, max_h = 0;
+    const char *p = text;
+
+    while (*p) {
+        const char *seg_start = p;
+        Uint32 cp = utf8_decode(&p);
+        TTF_Font *font = font_for_codepoint(cp);
+
+        /* group consecutive chars that use the same font */
+        while (*p) {
+            const char *next = p;
+            Uint32 next_cp = utf8_decode(&next);
+            if (font_for_codepoint(next_cp) != font) break;
+            p = next;
+        }
+
+        size_t seg_len = p - seg_start;
+        char *seg_buf = malloc(seg_len + 1);
+        if (!seg_buf) continue;
+        memcpy(seg_buf, seg_start, seg_len);
+        seg_buf[seg_len] = '\0';
+
+        int w = 0, h = 0;
+        if (TTF_SizeUTF8(font, seg_buf, &w, &h) == 0) {
+            /* Cap emoji glyph height to line height for layout purposes.
+               The draw function scales oversized glyphs down at render time. */
+            int line_h = font_stack_line_height();
+            if (h > line_h * 3 / 2) {
+                w = (int)(w * (float)line_h / (float)h);
+                h = line_h;
+            }
+            total_w += w;
+            if (h > max_h) max_h = h;
+        }
+        free(seg_buf);
+    }
+
+    *out_w = (uint16_t)total_w;
+    *out_h = (uint16_t)max_h;
     return ESP_OK;
 }
 
@@ -563,32 +707,73 @@ esp_err_t display_hal_draw_text(int x, int y, const char *text, uint8_t font_siz
                                  uint16_t text_color, bool has_bg, uint16_t bg_color)
 {
     if (!text || !text[0]) return ESP_ERR_INVALID_ARG;
-    if (!s_ctx.font && !get_font(16)) {
-        /* Fallback: simple pixel (no TTF available) */
-        return ESP_OK;
-    }
 
-    TTF_Font *f = get_font(font_size * 16);
-    if (!f) return ESP_ERR_INVALID_STATE;
+    int ptsize = font_size * 16;
+    if (font_stack_load(ptsize) == 0) return ESP_OK;
 
     SDL_Color fg = { 0, 0, 0, 255 };
     rgb565_to_rgb(text_color, &fg.r, &fg.g, &fg.b);
 
-    SDL_Surface *glyph = TTF_RenderUTF8_Blended(f, text, fg);
-    if (!glyph) return ESP_ERR_INVALID_STATE;
+    const char *p = text;
+    int cx = x;
 
-    if (has_bg) {
-        SDL_Rect bg_rect = { x, y, glyph->w, glyph->h };
-        SDL_FillRect(s_ctx.surface, &bg_rect, bg_color);
+    while (*p) {
+        const char *seg_start = p;
+        Uint32 cp = utf8_decode(&p);
+        TTF_Font *font = font_for_codepoint(cp);
+
+        /* group consecutive chars that use the same font */
+        while (*p) {
+            const char *next = p;
+            Uint32 next_cp = utf8_decode(&next);
+            if (font_for_codepoint(next_cp) != font) break;
+            p = next;
+        }
+
+        size_t seg_len = p - seg_start;
+        char *seg_buf = malloc(seg_len + 1);
+        if (!seg_buf) continue;
+        memcpy(seg_buf, seg_start, seg_len);
+        seg_buf[seg_len] = '\0';
+
+        SDL_Surface *glyph = TTF_RenderUTF8_Blended(font, seg_buf, fg);
+        free(seg_buf);
+
+        if (glyph) {
+            int g_w = glyph->w;
+            int g_h = glyph->h;
+
+            /* Noto Color Emoji uses fixed-size bitmaps (~136 px) regardless
+               of point size.  Scale the glyph down to the text line height
+               so emoji don't dwarf surrounding CJK text. */
+            int line_h = font_stack_line_height();
+            if (g_h > line_h * 3 / 2) {
+                float scale = (float)line_h / (float)g_h;
+                int new_w = (int)(g_w * scale);
+                int new_h = line_h;
+                SDL_Surface *scaled = SDL_CreateRGBSurfaceWithFormat(
+                    0, new_w, new_h, 32, SDL_PIXELFORMAT_RGBA32);
+                if (scaled) {
+                    SDL_SetSurfaceBlendMode(glyph, SDL_BLENDMODE_NONE);
+                    SDL_BlitScaled(glyph, NULL, scaled, NULL);
+                    SDL_FreeSurface(glyph);
+                    glyph = scaled;
+                    g_w = new_w;
+                    g_h = new_h;
+                }
+            }
+
+            if (has_bg) {
+                SDL_Rect bg_rect = { cx, y, g_w, g_h };
+                SDL_FillRect(s_ctx.surface, &bg_rect, bg_color);
+            }
+            SDL_SetSurfaceBlendMode(glyph, SDL_BLENDMODE_BLEND);
+            SDL_Rect dst = { cx, y, g_w, g_h };
+            SDL_BlitSurface(glyph, NULL, s_ctx.surface, &dst);
+            cx += g_w;
+            SDL_FreeSurface(glyph);
+        }
     }
-
-    /* Let SDL handle format conversion and alpha blending onto the
-       RGB565 back-buffer — avoids all per-pixel format/endian issues. */
-    SDL_SetSurfaceBlendMode(glyph, SDL_BLENDMODE_BLEND);
-    SDL_Rect dst = { x, y, glyph->w, glyph->h };
-    SDL_BlitSurface(glyph, NULL, s_ctx.surface, &dst);
-
-    SDL_FreeSurface(glyph);
     return ESP_OK;
 }
 

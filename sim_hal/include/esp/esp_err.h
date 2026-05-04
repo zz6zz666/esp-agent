@@ -23,6 +23,8 @@ typedef int32_t esp_err_t;
 #define ESP_ERR_NOT_SUPPORTED    0x106
 #define ESP_ERR_TIMEOUT          0x107
 #define ESP_ERR_INVALID_RESPONSE 0x108
+#define ESP_ERR_HTTP_CONNECT    0x7002
+#define ESP_ERR_HTTP_CONNECTING 0x7003
 #define ESP_ERR_NVS_NO_FREE_PAGES        0x1101
 #define ESP_ERR_NVS_NEW_VERSION_FOUND    0x1102
 
@@ -47,6 +49,7 @@ static inline const char *esp_err_to_name(esp_err_t err)
     case ESP_ERR_NOT_FOUND:       return "ESP_ERR_NOT_FOUND";
     case ESP_ERR_NOT_SUPPORTED:   return "ESP_ERR_NOT_SUPPORTED";
     case ESP_ERR_TIMEOUT:         return "ESP_ERR_TIMEOUT";
+    case ESP_ERR_HTTP_CONNECT:    return "ESP_ERR_HTTP_CONNECT";
     default:                      return "ESP_ERR_UNKNOWN";
     }
 }

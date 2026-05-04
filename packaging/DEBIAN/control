@@ -1,13 +1,14 @@
 Package: esp-agent
-Version: 1.0.2
+Version: 1.0.0
 Section: utils
 Priority: optional
 Architecture: amd64
 Essential: no
 Depends: libc6 (>= 2.34), libcurl4 (>= 7.81), liblua5.4-0 (>= 5.4), libsdl2-2.0-0 (>= 2.0), libsdl2-ttf-2.0-0, libjson-c5 (>= 0.15), libpng16-16t64 (>= 1.6), fonts-wqy-zenhei
+Recommends: fonts-noto-color-emoji
 Maintainer: esp-agent team
-Installed-Size: 3596
-Homepage: https://github.com/espressif/esp-claw
+Installed-Size: 3748
+Homepage: https://github.com/zz6zz666/esp-agent
 Description: Desktop simulator for the esp-claw embedded AI agent framework
  esp-agent provides a complete Linux desktop test environment for
  the esp-claw AI agent framework, requiring no ESP32 hardware.

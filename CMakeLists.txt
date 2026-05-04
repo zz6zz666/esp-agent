@@ -31,6 +31,7 @@ set(SIM_SRCS
     ${SIM_HAL_DIR}/aes_stub.c
     ${SIM_HAL_DIR}/esp_board_manager_stub.c
     ${SIM_HAL_DIR}/emote_stub.c
+    ${SIM_HAL_DIR}/esp_mcp_stubs.c
     ${SIM_HAL_DIR}/esp_lcd_panel_stub.c
     ${SIM_HAL_DIR}/esp_mmap_assets_stub.c
     ${SIM_HAL_DIR}/lv_font_stub.c
@@ -112,6 +113,8 @@ add_compile_definitions(
     CONFIG_APP_CLAW_CAP_SCHEDULER=1
     CONFIG_APP_CLAW_CAP_SYSTEM=1
     CONFIG_APP_CLAW_CAP_CLI=1
+    CONFIG_APP_CLAW_CAP_MCP_CLIENT=1
+    CONFIG_APP_CLAW_CAP_MCP_SERVER=1
     CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=1
     CONFIG_FREERTOS_USE_TRACE_FACILITY=1
     CONFIG_APP_CLAW_MEMORY_MODE_FULL=1
@@ -133,6 +136,7 @@ set(COMMON_INCLUDES
     ${SIM_INC_DIR}/esp
     ${SIM_INC_DIR}/freertos
     ${SIM_INC_DIR}/mbedtls
+    ${SIM_INC_DIR}/lwip
     # claw_modules
     ${ESPCLAW_COMPONENTS}/claw_modules/claw_core/include
     ${ESPCLAW_COMPONENTS}/claw_modules/claw_core/src
@@ -159,6 +163,8 @@ set(COMMON_INCLUDES
     ${ESPCLAW_COMPONENTS}/claw_capabilities/cap_session_mgr/include
     ${ESPCLAW_COMPONENTS}/claw_capabilities/cap_router_mgr/include
     ${ESPCLAW_COMPONENTS}/claw_capabilities/cap_llm_inspect/include
+    ${ESPCLAW_COMPONENTS}/claw_capabilities/cap_mcp_client/include
+    ${ESPCLAW_COMPONENTS}/claw_capabilities/cap_mcp_server/include
     # common
     ${ESPCLAW_COMPONENTS}/common/app_claw/include
     ${ESPCLAW_COMPONENTS}/common/settings/include
@@ -280,6 +286,16 @@ set(ESPCLAW_SRCS
 
     # cap_cli
     ${ESPCLAW_COMPONENTS}/claw_capabilities/cap_cli/src/cap_cli.c
+
+    # cap_mcp_client
+    ${ESPCLAW_COMPONENTS}/claw_capabilities/cap_mcp_client/src/cap_mcp_client.c
+    ${ESPCLAW_COMPONENTS}/claw_capabilities/cap_mcp_client/src/cap_mcp_client_core.c
+    ${ESPCLAW_COMPONENTS}/claw_capabilities/cap_mcp_client/src/cap_mcp_discover_core.c
+    ${ESPCLAW_COMPONENTS}/claw_capabilities/cap_mcp_client/src/cmd_cap_mcp_client.c
+
+    # cap_mcp_server
+    ${ESPCLAW_COMPONENTS}/claw_capabilities/cap_mcp_server/src/cap_mcp_server.c
+    ${ESPCLAW_COMPONENTS}/claw_capabilities/cap_mcp_server/src/cmd_cap_mcp_server.c
 
     # cap_session_mgr
     ${ESPCLAW_COMPONENTS}/claw_capabilities/cap_session_mgr/src/cap_session_mgr.c

@@ -1,14 +1,14 @@
-# esp-agent — esp-claw 桌面模拟器
+# esp-agent —— 基于esp-claw的超轻量级沙盒claw（esp-claw Simulator）
 
-在 Linux 桌面端完整运行 [esp-claw](https://github.com/espressif/esp-claw) 嵌入式 AI Agent 框架，无需 ESP32 硬件。通过一套 POSIX 兼容层（FreeRTOS→pthread、ESP-IDF→stub），将 esp-claw 的核心代码直接在桌面 Linux 上编译运行。
+在 Linux 桌面端完整运行 [esp-claw](https://github.com/espressif/esp-claw) 嵌入式 AI Agent 框架，无需 ESP32 硬件。通过一套 POSIX 兼容层（FreeRTOS→pthread、ESP-IDF→stub），将 esp-claw 的核心代码直接在桌面 Linux 上编译运行，提供模拟 LCD 屏和 lua 脚本执行能力。
 
 ## 特性
 
 - **零硬件依赖** — 不需要 ESP32 开发板、不需要 JTAG 调试器，纯软件模拟
 - **即装即用** — 提供预构建 `.deb` 包，一键安装，自动解决依赖
 - **DeepSeek 兼容** — 内置 OpenAI 兼容后端，支持 DeepSeek、OpenAI、Ollama 等
-- **完整 CLI 支持** — 9 条内置命令行（`ask`、`cap`、`auto`、`lua`、`skill` 等）通过 Unix Socket 可用
-- **可选的屏幕模拟** — 通过 SDL2 窗口模拟 ESP32 LCD 显示屏，可配置关闭
+- **直接命令转发** — 管理命令之外的所有命令（`ask`、`cap`、`lua`、`skill` 等）直接转发到 Agent 内部 CLI，无需进入子 REPL
+- **屏幕模拟** — 通过 SDL2 窗口模拟 ESP32 LCD 显示屏，可配置关闭
 - **systemd 用户服务** — 支持登录自动启动
 - **独立设计** — 模拟器代码完全与上游 `esp-claw/` 分离，互不污染
 
@@ -31,8 +31,8 @@ esp-agent config
 # 3. 启动 Agent
 esp-agent start
 
-# 4. 在另一个终端连接 CLI
-esp-agent connect
+# 4. 向 Agent 发送消息
+esp-agent ask "你好"
 ```
 
 ### 方式二：从源码构建
@@ -52,12 +52,12 @@ git submodule update --init
 # 4. 配置并启动
 ./esp-agent config
 ./esp-agent start
-./esp-agent connect
+./esp-agent ask "你好"
 ```
 
 ## 配置 LLM
 
-### 方式一：交互式配置向导
+### 方式一：交互式配置向导（推荐）
 
 ```bash
 esp-agent config
@@ -80,10 +80,43 @@ LLM_API_KEY=sk-xxx LLM_MODEL=gpt-4o LLM_PROFILE=openai esp-agent start
 ```json
 {
   "llm": {
-    "api_key": "sk-your-api-key",
-    "model": "deepseek-chat",
-    "profile": "openai",
-    "base_url": ""
+    "api_key": "sk-d*****************************c",
+    "model": "deepseek-v4-flash",
+    "profile": "anthropic",
+    "base_url": "https://api.deepseek.com/anthropic",
+    "auth_type": "",
+    "timeout_ms": "120000",
+    "max_tokens": "1048576"
+  },
+  "channels": {
+    "local_im": {
+      "enabled": true
+    },
+    "qq": {
+      "enabled": true,
+      "app_id": "",
+      "app_secret": ""
+    },
+    "telegram": {
+      "enabled": false,
+      "bot_token": ""
+    },
+    "feishu": {
+      "enabled": false,
+      "app_id": "",
+      "app_secret": ""
+    },
+    "wechat": {
+      "enabled": false,
+      "token": "",
+      "base_url": "",
+      "cdn_base_url": "",
+      "account_id": ""
+    }
+  },
+  "search": {
+    "brave_key": "",
+    "tavily_key": ""
   },
   "display": {
     "enabled": true
@@ -93,15 +126,16 @@ LLM_API_KEY=sk-xxx LLM_MODEL=gpt-4o LLM_PROFILE=openai esp-agent start
 
 **支持的 `profile` 值：**
 
-| profile | 默认 API 端点 |
-|---------|-------------|
-| `openai` | `https://api.openai.com/v1` |
+| profile       | 默认 API 端点                    |
+| ------------- | -------------------------------- |
+| `openai`    | `https://api.openai.com/v1`    |
 | `anthropic` | `https://api.anthropic.com/v1` |
-| `custom` | 自定义后端 |
+| `custom`    | 自定义后端                       |
 
 ### 常用 LLM 服务商配置示例
 
 **DeepSeek:**
+
 ```json
 {
   "llm": {
@@ -114,6 +148,7 @@ LLM_API_KEY=sk-xxx LLM_MODEL=gpt-4o LLM_PROFILE=openai esp-agent start
 ```
 
 **本地 Ollama:**
+
 ```json
 {
   "llm": {
@@ -129,37 +164,53 @@ LLM_API_KEY=sk-xxx LLM_MODEL=gpt-4o LLM_PROFILE=openai esp-agent start
 
 ### esp-agent 管理命令
 
-| 命令 | 说明 |
-|------|------|
-| `esp-agent config` | 交互式配置向导（首次使用） |
-| `esp-agent start` | 后台启动 Agent，实时显示日志 |
-| `esp-agent stop` | 优雅停止 Agent |
-| `esp-agent status` | 检查 Agent 运行状态 |
-| `esp-agent connect` | 连接到 Agent 的 CLI REPL |
-| `esp-agent build` | 从源码编译（仅开发模式） |
-| `esp-agent clean` | 清理编译产物 |
-| `esp-agent service enable` | 启用 systemd 用户服务（登录自启） |
-| `esp-agent service disable` | 禁用 systemd 用户服务 |
-| `esp-agent --version` | 显示版本号 |
+| 命令                                    | 说明                                       |
+| --------------------------------------- | ------------------------------------------ |
+| `esp-agent --help`                    | 显示桌面端帮助（含 esp-claw 内部命令列表） |
+| `esp-agent config`                    | 交互式配置向导（首次使用）                 |
+| `esp-agent start`                     | 后台启动 Agent，实时显示日志               |
+| `esp-agent stop`                      | 优雅停止 Agent                             |
+| `esp-agent restart`                   | 重启 Agent                                 |
+| `esp-agent status`                    | 检查 Agent 运行状态                        |
+| `esp-agent logs`                      | 查看 Agent 运行日志                        |
+| `esp-agent build`                     | 从源码编译（仅开发模式）                   |
+| `esp-agent clean`                     | 清理编译产物                               |
+| `esp-agent service enable`            | 启用 systemd 用户服务（登录自启）          |
+| `esp-agent service disable`           | 禁用 systemd 用户服务                      |
+| `esp-agent service start\|stop\|status` | systemd 服务控制                           |
+| `esp-agent --version`                 | 显示版本号                                 |
 
-### Agent CLI 命令（通过 `connect` 进入）
+### Agent 命令（直接转发）
 
-| 命令 | 说明 |
-|------|------|
-| `help` | 列出所有可用命令 |
-| `ask <prompt>` | 提交多轮对话请求（使用当前会话） |
-| `ask_once <prompt>` | 提交单轮对话请求（无会话历史） |
-| `session [id]` | 查看或切换当前会话 |
-| `cap list` | 列出所有已注册的能力 (33项) |
-| `cap groups` | 列出所有能力分组 (7组) |
-| `cap call <name> <json>` | 直接调用指定能力 |
-| `auto rules` | 查看事件路由规则 |
-| `auto last` | 查看最后一次路由结果 |
-| `auto reload` | 重新加载路由规则 |
-| `lua --list` | 列出可用的 Lua 脚本 |
-| `lua --run --path <file>` | 运行 Lua 脚本 |
-| `skill --catalog` | 查看技能目录 (3项) |
-| `skill --activate <name>` | 激活指定技能 |
+除上述管理命令以外，所有以 `esp-agent` 开头的命令都会直接转发给 Agent 内部 CLI
+处理（通过 Unix Socket 单次请求-响应）。无需进入子 REPL。
+
+查看 Agent 内部帮助：
+
+```bash
+# 显示桌面端帮助（管理命令 + Agent 内部命令列表）
+esp-agent --help
+
+# 仅查看 esp-claw 内部的帮助（需 Agent 在运行）
+esp-agent esp-claw help
+```
+
+| 命令                                  | 说明                                         |
+| ------------------------------------- | -------------------------------------------- |
+| `esp-agent ask <prompt>`            | 提交多轮对话请求（使用当前会话）             |
+| `esp-agent ask_once <prompt>`       | 提交单轮对话请求（无会话历史）               |
+| `esp-agent session [id]`            | 查看或切换当前会话                           |
+| `esp-agent cap list`                | 列出所有已注册的能力 (~54项)                 |
+| `esp-agent cap groups`              | 列出所有能力分组 (13组)                      |
+| `esp-agent cap call <name> <json>`  | 直接调用指定能力（需传入 JSON，无参用 `{}`）  |
+| `esp-agent auto rules`              | 查看事件路由规则                             |
+| `esp-agent auto last`               | 查看最后一次路由结果                         |
+| `esp-agent auto reload`             | 重新加载路由规则                             |
+| `esp-agent lua --list`              | 列出可用的 Lua 脚本                          |
+| `esp-agent lua --run --path <file>` | 运行 Lua 脚本                                |
+| `esp-agent skill --catalog`         | 查看技能目录 (3项)                           |
+| `esp-agent skill --activate <name>` | 激活指定技能                                 |
+| `esp-agent hello`                   | 未知命令示例 — Agent 返回 "Unknown command" |
 
 ## systemd 用户服务
 
@@ -220,51 +271,68 @@ esp-agent/
 
 ### FreeRTOS → POSIX 映射
 
-| FreeRTOS API | Linux 等效实现 |
-|-------------|--------------|
-| `xTaskCreate` | `pthread_create` |
-| `vTaskDelete` | `pthread_cancel` + `pthread_join` |
-| `vTaskDelay` | `usleep` |
-| `xQueueCreate/Send/Receive` | 环形缓冲区 + `pthread_mutex_t` + `pthread_cond_t` |
-| `xSemaphoreCreateMutex/Take/Give` | `pthread_mutex_t` + `pthread_cond_t` |
-| `xTaskGetTickCount` | `gettimeofday` → 毫秒 |
+| FreeRTOS API                        | Linux 等效实现                                       |
+| ----------------------------------- | ---------------------------------------------------- |
+| `xTaskCreate`                     | `pthread_create`                                   |
+| `vTaskDelete`                     | `pthread_cancel` + `pthread_join`                |
+| `vTaskDelay`                      | `usleep`                                           |
+| `xQueueCreate/Send/Receive`       | 环形缓冲区 +`pthread_mutex_t` + `pthread_cond_t` |
+| `xSemaphoreCreateMutex/Take/Give` | `pthread_mutex_t` + `pthread_cond_t`             |
+| `xTaskGetTickCount`               | `gettimeofday` → 毫秒                             |
 
 ### 已启用的能力模块
 
-| 模块 | 功能 | 状态 |
-|------|------|------|
-| cap_im_local | 本地 Web 即时通讯界面 | 已启用 |
-| cap_files | 文件系统读写操作 (6 项能力) | 已启用 |
-| cap_lua | Lua 脚本执行引擎 (8 项能力) | 已启用 |
-| cap_skill_mgr | 技能注册/激活/停用 (5 项能力) | 已启用 |
-| cap_router_mgr | 事件路由规则管理 (6 项能力) | 已启用 |
-| cap_session_mgr | 会话管理 | 已启用 |
-| claw_memory | 长期记忆存储与提取 (5 项能力) | 已启用 |
+| 模块            | 功能                              | 状态   |
+| --------------- | --------------------------------- | ------ |
+| cap_im_local    | 本地 Web 即时通讯界面             | 已启用 |
+| cap_im_qq       | QQ Bot 网关与消息收发             | 已启用 |
+| cap_im_tg       | Telegram Bot 网关与消息收发       | 已启用 |
+| cap_im_feishu   | Feishu/Lark 网关与消息收发        | 已启用 |
+| cap_im_wechat   | WeChat Bot 网关与消息收发         | 已启用 |
+| cap_files       | 文件系统读写操作 (6 项能力)       | 已启用 |
+| cap_lua         | Lua 脚本执行引擎 (8 项能力)       | 已启用 |
+| cap_skill_mgr   | 技能注册/激活/停用 (5 项能力)     | 已启用 |
+| cap_router_mgr  | 事件路由规则管理 (6 项能力)       | 已启用 |
+| cap_session_mgr | 会话管理 (1 项能力)               | 已启用 |
+| claw_memory     | 长期记忆存储与提取 (5 项能力)     | 已启用 |
+| cap_system      | 系统信息：CPU/内存/WiFi/IP/uptime | 已启用 |
+| cap_time        | 获取当前时间                      | 已启用 |
+| cap_web_search  | 网络搜索 (Brave/Tavily)           | 已启用 |
+| cap_llm_inspect | 图片分析                          | 已启用 |
+| cap_scheduler   | 定时任务调度 (11 项能力)          | 已启用 |
+| cap_cli         | 运行允许的 CLI 命令               | 已启用 |
 
 ## 常用操作示例
 
 ```bash
 # 查看所有注册的能力
-$ esp-agent connect
-app> cap list
+esp-agent cap list
 
 # 向 LLM 发送消息
-app> ask 你好，请介绍一下你自己
+esp-agent ask "你好，请介绍一下你自己"
 
 # 让 Agent 操作文件
-app> ask 请列出当前目录的所有文件
+esp-agent ask "请列出当前目录的所有文件"
 
 # 让 Agent 记住信息
-app> ask 请帮我记住：我最喜欢的颜色是蓝色
+esp-agent ask "请帮我记住：我最喜欢的颜色是蓝色"
 
 # 运行 Lua 脚本
-app> lua --run --path hello.lua
+esp-agent lua --run --path hello.lua
+
+# 查看系统信息（无参 cap call 需传入 {}）
+esp-agent 'cap call get_system_info {}'
+esp-agent 'cap call get_memory_info {}'
+esp-agent 'cap call get_cpu_usage {}'
 
 # 查看记忆
-app> cap call memory_list {}
+esp-agent 'cap call memory_list {}'
+
+# 有参数的 cap call（传入 JSON）
+esp-agent 'cap call scheduler_add {"cron":"0 */2 * * *","action":"run_lua script=hello.lua"}'
 
 # 切换会话
-app> session my-new-session
+esp-agent session my-new-session
 ```
 
 ## 常见问题
@@ -273,7 +341,7 @@ app> session my-new-session
 
 检查 `~/.esp-agent/` 目录权限是否正确。可以尝试删除该目录后重新运行。
 
-**Q: 连接 CLI 时报 `Agent is not running`？**
+**Q: 执行命令时报 `Agent is not running`？**
 
 先运行 `esp-agent start` 启动服务，用 `esp-agent status` 确认状态。
 

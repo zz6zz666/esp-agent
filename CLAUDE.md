@@ -159,6 +159,8 @@ Environment variable overrides: `LLM_API_KEY`, `LLM_MODEL`, `LLM_PROFILE`, `LLM_
 | cap_web_search    | `components/claw_capabilities/cap_web_search/` — search          | compiled, working                   |
 | cap_llm_inspect   | `components/claw_capabilities/cap_llm_inspect/` — image analysis | compiled, working                   |
 | cap_cli           | `components/claw_capabilities/cap_cli/` — run CLI commands       | compiled, working (8 allowed cmds)  |
+| cap_mcp_client    | `components/claw_capabilities/cap_mcp_client/` — MCP client    | compiled, working (3 tools)         |
+| cap_mcp_server    | `components/claw_capabilities/cap_mcp_server/` — MCP server    | compiled, working (lifecycle)       |
 | app_claw + CLI    | `components/common/app_claw/` — app glue + CLI REPL              | compiled, working                   |
 
 ### Our sim_hal layer
@@ -189,7 +191,19 @@ sim_hal/
 │   │   ├── gpio_stub.h       # GPIO no-ops
 │   │   ├── i2c_stub.h        # I2C no-ops
 │   │   ├── spi_stub.h        # SPI no-ops
+│   │   ├── esp_http_server.h # HTTP server stub
+│   │   ├── esp_mcp_engine.h  # MCP SDK stub
+│   │   ├── esp_mcp_mgr.h     # MCP manager stub
+│   │   ├── esp_mcp_property.h# MCP property stub
+│   │   ├── esp_mcp_tool.h    # MCP tool stub
+│   │   ├── esp_mcp_data.h    # MCP data stub
+│   │   ├── esp_mcp_completion.h# MCP completion stub
+│   │   ├── esp_mcp_prompt.h  # MCP prompt stub
+│   │   ├── esp_mcp_resource.h# MCP resource stub
+│   │   ├── mdns.h            # mDNS no-op stub
 │   │   └── adc_stub.h        # ADC no-ops
+│   ├── lwip/                 # lwIP stub headers
+│   │   └── ip_addr.h         # IP address stub
 │   └── freertos/             # FreeRTOS API stub headers
 │       ├── FreeRTOS.h        # Types + all API declarations + runtime stats
 │       ├── task.h → FreeRTOS.h
@@ -210,6 +224,7 @@ sim_hal/
 ├── cJSON.c + cJSON.h          # cJSON v1.7.18
 ├── aes_stub.c                 # AES no-op stub
 ├── emote_stub.c               # Emote engine stub
+├── esp_mcp_stubs.c            # MCP SDK no-op implementations
 └── lv_font_stub.c             # LVGL font stub
 ```
 
@@ -242,6 +257,8 @@ auto reload|rules|rule|add_rule|update_rule|delete_rule|last|emit_message|emit_t
 lua --list|--write|--run|--run-async|--jobs|--job  (argtable3 parsed)
 event_router --rules|--rule|--add-rule-json|--update-rule-json|--delete-rule|--reload|--emit-message
 skill --catalog|--register|--unregister|--list|--activate|--deactivate|--clear
+mcp_client --discover|--list-tools|--call-tool  (argtable3 parsed)
+mcp_server --status|--enable|--disable|--set-config  (argtable3 parsed)
 ```
 
 ## Build
@@ -288,6 +305,8 @@ make -j$(nproc)
 | `CONFIG_APP_CLAW_CAP_SCHEDULER=1`    | enabled |
 | `CONFIG_APP_CLAW_CAP_SYSTEM=1`       | enabled |
 | `CONFIG_APP_CLAW_CAP_CLI=1`          | enabled |
+| `CONFIG_APP_CLAW_CAP_MCP_CLIENT=1`   | enabled |
+| `CONFIG_APP_CLAW_CAP_MCP_SERVER=1`   | enabled |
 | `CONFIG_APP_CLAW_MEMORY_MODE_FULL=1` | enabled |
 | `CONFIG_APP_CLAW_ENABLE_CLI=1`       | enabled |
 | `CONFIG_APP_CLAW_ENABLE_EMOTE=1`     | enabled |
@@ -299,23 +318,30 @@ make -j$(nproc)
 
 ## Verified at runtime
 
-All 13 capability groups register (~54 capabilities), CLI REPL serves 12 commands over Unix socket:
+All 19 capability groups register (~72 capabilities), CLI REPL serves 14 commands over Unix socket:
 
 ```
-[I] [app_capabilities] Register local / Web IM cap ok (groups=1, caps=2)
-[I] [app_capabilities] Register files cap ok (groups=2, caps=8)
+[I] [app_capabilities] Register QQ cap ok (groups=1, caps=4)
+[I] [app_capabilities] Register Feishu cap ok (groups=2, caps=8)
+[I] [app_capabilities] Register Telegram cap ok (groups=3, caps=12)
+[I] [app_capabilities] Register WeChat cap ok (groups=4, caps=15)
+[I] [app_capabilities] Register local / Web IM cap ok (groups=5, caps=17)
+[I] [app_capabilities] Register files cap ok (groups=6, caps=23)
+[I] [app_capabilities] Register scheduler cap ok (groups=7, caps=34)
 [I] [cap_lua_rt] Lua runtime ready
-[I] [app_capabilities] Register Lua cap ok (groups=3, caps=16)
-[I] [app_capabilities] Register skill cap ok (groups=4, caps=21)
-[I] [app_capabilities] Register claw_memory group ok (groups=5, caps=26)
-[I] [app_capabilities] Register router manager cap ok (groups=6, caps=32)
-[I] [app_capabilities] Register session manager cap ok (groups=7, caps=33)
-[I] [app_capabilities] Register system cap ok (groups=8, caps=39)
-[I] [app_capabilities] Register web_search cap ok (groups=9, caps=40)
-[I] [app_capabilities] Register time cap ok (groups=10, caps=41)
-[I] [app_capabilities] Register scheduler cap ok (groups=11, caps=52)
-[I] [app_capabilities] Register LLM inspect cap ok (groups=12, caps=53)
-[I] [app_capabilities] Register CLI cap ok (groups=13, caps=54)
+[I] [app_capabilities] Register Lua cap ok (groups=8, caps=42)
+[I] [app_capabilities] Register MCP client cap ok (groups=9, caps=45)
+[I] [app_capabilities] Register MCP server cap ok (groups=10, caps=46)
+[I] [app_capabilities] Register skill cap ok (groups=11, caps=51)
+[I] [app_capabilities] Register system cap ok (groups=12, caps=57)
+[I] [app_capabilities] Register claw_memory group ok (groups=13, caps=62)
+[I] [app_capabilities] Register time cap ok (groups=14, caps=63)
+[I] [app_capabilities] Register LLM inspect cap ok (groups=15, caps=64)
+[I] [app_capabilities] Register web search cap ok (groups=16, caps=65)
+[I] [app_capabilities] Register router manager cap ok (groups=17, caps=71)
+[I] [app_capabilities] Register session manager cap ok (groups=18, caps=72)
+[I] [cap_mcp_srv] MCP server ready: http://esp-claw.local:18791/mcp_server
+[I] [desktop_main] cap_cli registered with 8 allowed commands (group 19)
 [I] [console_unix] Unix socket ready at ~/.esp-agent/agent.sock
 ```
 
@@ -350,7 +376,7 @@ Note: wrap the full command in single quotes to prevent shell expansion of `{}` 
 - [X] Event router (startup event published/processed)
 - [X] Memory init (root dir, extract disabled without LLM)
 - [X] Skills init (3 skills loaded, auto-created on first run)
-- [X] All 13 capability groups registered (~54 capabilities)
+- [X] All 19 capability groups registered (~72 capabilities)
 - [X] Unix socket CLI (help, ask, cap, auto, lua, event_router, skill, session)
 - [X] esp-agent CLI tool (config/start/stop/status/logs/ask/display/build/clean)
 - [X] config.json read + env var overrides

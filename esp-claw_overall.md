@@ -14,8 +14,7 @@ ESP-Claw Codebase Architecture Report
    hw_modules/                ~ Board-specific modules for hardware (GPIO, I2C, display, camera, etc.)
    common/                    ~ Shared utilities (gpio helper, display, button, esp_wifi, settings, wifi_manager)
    docs/                         ~ Astro-based documentation website
-2. Languages and Proportions
-   | Extension | Count | Role                                                 |
+2. Languages and Proportions| Extension | Count | Role                                                 |
    | --------- | ----- | ---------------------------------------------------- |
    | .c        | 138   | Main firmware implementation                         |
    | .h        | 101   | C headers                                            |
