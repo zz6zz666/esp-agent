@@ -1,0 +1,58 @@
+{
+  "skills": [
+    {
+      "id": "lua_runner",
+      "file": "lua_runner.md",
+      "summary": "Run Lua scripts for automation, data processing, and display rendering.",
+      "cap_groups": ["cap_lua"]
+    },
+    {
+      "id": "lua_module_display",
+      "file": "lua_module_display.md",
+      "summary": "Draw text, shapes, images, and pixel graphics on the screen.",
+      "cap_groups": ["cap_lua"]
+    },
+    {
+      "id": "lua_module_delay",
+      "file": "lua_module_delay.md",
+      "summary": "High-precision microsecond delays and timing.",
+      "cap_groups": ["cap_lua"]
+    },
+    {
+      "id": "lua_module_storage",
+      "file": "lua_module_storage.md",
+      "summary": "Read, write, list, and delete files on the filesystem.",
+      "cap_groups": ["cap_lua"]
+    },
+    {
+      "id": "lua_module_system",
+      "file": "lua_module_system.md",
+      "summary": "Device information, reboot, free heap, and system status.",
+      "cap_groups": ["cap_lua"]
+    },
+    {
+      "id": "lua_module_event_publisher",
+      "file": "lua_module_event_publisher.md",
+      "summary": "Publish events to the agent's event bus from Lua scripts.",
+      "cap_groups": ["cap_lua"]
+    },
+    {
+      "id": "lua_module_capability",
+      "file": "lua_module_capability.md",
+      "summary": "Call agent capabilities directly from Lua scripts.",
+      "cap_groups": ["cap_lua"]
+    },
+    {
+      "id": "memory_ops",
+      "file": "memory_ops.md",
+      "summary": "Store, recall, update, search, and manage long-term memory.",
+      "cap_groups": ["claw_memory"]
+    },
+    {
+      "id": "file_ops",
+      "file": "file_ops.md",
+      "summary": "List, read, write, and delete files on the device.",
+      "cap_groups": ["cap_files"]
+    }
+  ]
+}

@@ -37,6 +37,7 @@
 #include "claw_skill.h"
 #include "display_hal.h"
 #include "display_hal_input.h"
+#include "cap_lua.h"
 #include "esp_console.h"
 #include "esp_err.h"
 #include "esp_log.h"
@@ -44,7 +45,23 @@
 #include "freertos/task.h"
 
 #define ESP_AGENT_VERSION "1.0.0"
-#define DEFAULTS_DIR       "/usr/share/esp-agent/defaults"
+#if defined(PLATFORM_WINDOWS)
+/* On Windows, defaults ship alongside the executable */
+static void get_defaults_dir(char *buf, size_t bufsz)
+{
+    GetModuleFileNameA(NULL, buf, (DWORD)bufsz);
+    char *slash = strrchr(buf, '\\');
+    if (slash) *slash = '\0';
+    snprintf(buf + strlen(buf), bufsz - strlen(buf), "\\defaults");
+}
+#else
+#define DEFAULTS_DIR "/usr/share/esp-agent/defaults"
+static const char *get_defaults_dir(char *buf, size_t bufsz)
+{
+    (void)bufsz;
+    return DEFAULTS_DIR;
+}
+#endif
 
 /* ---- platform helpers ---- */
 #if defined(PLATFORM_WINDOWS)
@@ -84,6 +101,25 @@ extern bool display_hal_recreate_emote(void);
 #if defined(PLATFORM_WINDOWS)
 # include "tray_icon.h"
 #endif
+
+/* ---- Lua timer module (wall-clock sleep for Lua scripts) ---- */
+#include "lua.h"
+#include "lauxlib.h"
+
+static int l_timer_sleep_ms(lua_State *L)
+{
+    uint32_t ms = (uint32_t)luaL_checkinteger(L, 1);
+    display_hal_sleep_ms(ms);
+    return 0;
+}
+
+static int luaopen_timer(lua_State *L)
+{
+    lua_newtable(L);
+    lua_pushcfunction(L, l_timer_sleep_ms);
+    lua_setfield(L, -2, "sleep_ms");
+    return 1;
+}
 
 /* ---- helpers ---- */
 
@@ -208,14 +244,16 @@ static void copy_tree(const char *src, const char *dst)
  */
 static void seed_defaults(const char *data_dir)
 {
-    if (access(DEFAULTS_DIR, F_OK) != 0) return;
+    char defaults_dir[PATH_MAX];
+    get_defaults_dir(defaults_dir, sizeof(defaults_dir));
+    if (access(defaults_dir, F_OK) != 0) return;
 
     char config_path[PATH_MAX];
     snprintf(config_path, sizeof(config_path), "%s/config.json", data_dir);
     if (access(config_path, F_OK) == 0) return;
 
-    ESP_LOGI(TAG, "Seeding defaults from %s", DEFAULTS_DIR);
-    copy_tree(DEFAULTS_DIR, data_dir);
+    ESP_LOGI(TAG, "Seeding defaults from %s", defaults_dir);
+    copy_tree(defaults_dir, data_dir);
 }
 
 /*
@@ -903,6 +941,9 @@ int main(int argc, char **argv)
     strncpy(paths.router_rules_path, abs_router_rules, sizeof(paths.router_rules_path) - 1);
     strncpy(paths.scheduler_rules_path, abs_scheduler, sizeof(paths.scheduler_rules_path) - 1);
     strncpy(paths.im_attachment_root, abs_inbox, sizeof(paths.im_attachment_root) - 1);
+
+    /* Register timer module BEFORE app_claw_start (modules lock after init) */
+    cap_lua_register_module("timer", luaopen_timer);
 
     /* ---- bootstrap agent ---- */
     esp_err_t err = app_claw_start(&config, &paths);

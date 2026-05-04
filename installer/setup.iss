@@ -98,6 +98,9 @@ Source: "C:\msys64\mingw64\bin\libngtcp2_crypto_ossl-0.dll"; DestDir: "{app}"; F
 ; Emote engine assets (boot animation)
 Source: "..\sim_hal\assets\284_240\*"; DestDir: "{app}\assets\284_240"; Flags: ignoreversion recursesubdirs createallsubdirs
 
+; Defaults (skills, docs, scripts) — seeded on first run to ~/.esp-agent
+Source: "..\defaults\*"; DestDir: "{app}\defaults"; Flags: ignoreversion recursesubdirs createallsubdirs
+
 [Icons]
 Name: "{group}\{#MyAppName} Agent"; Filename: "{app}\{#MyAgentExeName}"; Parameters: "--foreground"; Comment: "Start esp-agent desktop simulator"
 Name: "{group}\{#MyAppName} CLI"; Filename: "{cmd}"; Parameters: "/k ""{app}\{#MyAppExeName}"" help"; Comment: "Open a terminal with esp-agent commands"

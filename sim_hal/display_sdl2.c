@@ -287,6 +287,15 @@ bool display_hal_quit_requested(void)
     return v;
 }
 
+void display_hal_sleep_ms(uint32_t ms)
+{
+#if defined(PLATFORM_WINDOWS)
+    Sleep(ms);
+#else
+    usleep(ms * 1000);
+#endif
+}
+
 /* ---- RGB565 helpers ---- */
 static inline uint16_t rgb_to_565(uint8_t r, uint8_t g, uint8_t b)
 {
