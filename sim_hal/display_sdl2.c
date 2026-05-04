@@ -1891,7 +1891,7 @@ esp_err_t display_hal_measure_text(const char *text, uint8_t font_size,
 {
     if (!text || !out_w || !out_h) return ESP_ERR_INVALID_ARG;
 
-    int ptsize = font_size * 16;
+    int ptsize = font_size;
     if (font_stack_load(ptsize) == 0) {
         *out_w = (uint16_t)(strlen(text) * 8 * font_size);
         *out_h = (uint16_t)(16 * font_size);
@@ -1945,7 +1945,7 @@ esp_err_t display_hal_draw_text(int x, int y, const char *text, uint8_t font_siz
 {
     if (!text || !text[0]) return ESP_ERR_INVALID_ARG;
 
-    int ptsize = font_size * 16;
+    int ptsize = font_size;
     if (font_stack_load(ptsize) == 0) return ESP_OK;
 
     int line_h = font_stack_line_height();
