@@ -18,6 +18,7 @@
 #if defined(PLATFORM_WINDOWS)
 # define WIN32_LEAN_AND_MEAN
 # include <windows.h>
+# include <dwmapi.h>
 # include <direct.h>
 # define mkdir_safe(path, mode) _mkdir(path)
 #else
@@ -142,6 +143,12 @@ typedef struct {
     bool pending_lua_target;  /* target mode for pending_switch */
     int clip_x, clip_y, clip_w, clip_h;
     bool clip_enabled;
+    /* Window position (top-center reference point) */
+    int  top_center_x, top_center_y;
+    bool has_saved_pos;
+    bool emote_visible;       /* user-intended emote visibility */
+    bool emote_was_visible;   /* snapshot before lua takeover */
+    bool always_hide;
     /* Lifecycle ops delegated from worker thread to main thread */
     bool lifecycle_pending;
     int  lifecycle_op;        /* 0=none, 1=create, 2=destroy */
@@ -252,6 +259,9 @@ void display_hal_hide_window(void)
 #else
     SDL_MinimizeWindow(s_ctx.window);
 #endif
+    if (!s_ctx.lua_mode) {
+        s_ctx.emote_visible = false;
+    }
 }
 
 void display_hal_show_window(void)
@@ -265,6 +275,9 @@ void display_hal_show_window(void)
 #else
     SDL_ShowWindow(s_ctx.window);
 #endif
+    if (!s_ctx.lua_mode) {
+        s_ctx.emote_visible = true;
+    }
 }
 
 bool display_hal_quit_requested(void)
@@ -331,20 +344,211 @@ static esp_err_t recreate_surface(int w, int h)
 }
 
 /* Create a borderless SDL window.  content_h is the LCD area height;
- * title_bar_h is added to the total window height. */
+ * title_bar_h is added to the total window height.
+ * always_on_top controls SDL_WINDOW_ALWAYS_ON_TOP (emote=yes, lua=no). */
 static SDL_Window *create_window_borderless(const char *title,
                                              int content_w, int content_h,
-                                             int bar_h)
+                                             int bar_h, bool always_on_top)
 {
     Uint32 flags = SDL_WINDOW_SHOWN;
     if (bar_h > 0) {
         flags |= SDL_WINDOW_BORDERLESS;
+    }
+    if (always_on_top) {
+        flags |= SDL_WINDOW_ALWAYS_ON_TOP;
     }
     return SDL_CreateWindow(title,
                              SDL_WINDOWPOS_UNDEFINED,
                              SDL_WINDOWPOS_UNDEFINED,
                              content_w, content_h + bar_h,
                              flags);
+}
+
+/* SDL_SetWindowHitTest callback: make title bar natively draggable by the
+ * window system.  This allows dragging even without the window having focus
+ * (the first click is handled by the OS, not SDL). */
+static SDL_HitTestResult hit_test_cb(SDL_Window *win, const SDL_Point *area,
+                                      void *data)
+{
+    (void)win; (void)data;
+    if (s_ctx.title_bar_h > 0 && area->y < s_ctx.title_bar_h) {
+        int btn_x = (s_ctx.lua_mode ? s_ctx.width : s_ctx.emu_width)
+                    - TITLE_BAR_BTN_W - 2;
+        if (area->x >= btn_x) return SDL_HITTEST_NORMAL;
+        return SDL_HITTEST_DRAGGABLE;
+    }
+    return SDL_HITTEST_NORMAL;
+}
+
+static void apply_window_effects(SDL_Window *win)
+{
+    if (!win) return;
+    if (s_ctx.title_bar_h > 0) {
+        SDL_SetWindowHitTest(win, hit_test_cb, NULL);
+    }
+
+#if defined(PLATFORM_WINDOWS)
+    /* Subtle rounded corners + shadow via DWM (Windows only) */
+    SDL_SysWMinfo wm;
+    SDL_VERSION(&wm.version);
+    if (SDL_GetWindowWMInfo(win, &wm)) {
+        HWND hwnd = wm.info.win.window;
+
+        /* Extend frame into client to enable DWM shadow on borderless windows.
+           A 1px margin triggers the native shadow render path. */
+        MARGINS m = {1, 1, 1, 1};
+        DwmExtendFrameIntoClientArea(hwnd, &m);
+
+        /* Rounded corners (Windows 11: DWMWCP_ROUND=2, DWMWCP_ROUNDSMALL=3).
+           DWMWA_WINDOW_CORNER_PREFERENCE = 33.
+           The call silently fails on Windows 10 — that's fine. */
+        DWORD corner = 3; /* DWMWCP_ROUNDSMALL — very mild rounding */
+        DwmSetWindowAttribute(hwnd, 33, &corner, sizeof(corner));
+
+        /* Signal DWM to recalculate window appearance */
+        SetWindowPos(hwnd, NULL, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+    }
+#endif
+}
+
+/* Compute top-left from top-center for a window of given content+bar size.
+ * Clamps to keep window at least 10px from screen edges. */
+static void top_center_to_rect(int tc_x, int tc_y,
+                                int content_w, int content_h, int bar_h,
+                                int *out_x, int *out_y)
+{
+    SDL_Rect db;
+    if (SDL_GetDisplayBounds(0, &db) != 0) {
+        db.x = 0; db.y = 0; db.w = 1920; db.h = 1080;
+    }
+    int win_w = content_w;
+    int win_h = content_h + bar_h;
+    int x = tc_x - win_w / 2;
+    int y = tc_y;
+    int margin = 10;
+    if (x < db.x + margin) x = db.x + margin;
+    if (y < db.y + margin) y = db.y + margin;
+    if (x + win_w > db.x + db.w - margin) x = db.x + db.w - win_w - margin;
+    if (y + win_h > db.y + db.h - margin) y = db.y + db.h - win_h - margin;
+    *out_x = x;
+    *out_y = y;
+}
+
+/* Save / load top-center position to ~/.esp-agent/window_pos */
+static void save_window_pos(void)
+{
+    const char *data_dir = getenv("ESP_AGENT_DATA_DIR");
+    if (!data_dir) return;
+    char path[512];
+    snprintf(path, sizeof(path), "%s/window_pos", data_dir);
+    FILE *f = fopen(path, "w");
+    if (f) {
+        fprintf(f, "%d %d\n", s_ctx.top_center_x, s_ctx.top_center_y);
+        fclose(f);
+    }
+}
+
+/* Default position: top-right, 150px from edges */
+static void compute_default_position(int *tx, int *ty)
+{
+    SDL_Rect db;
+    if (SDL_GetDisplayBounds(0, &db) != 0) {
+        db.x = 0; db.y = 0; db.w = 1920; db.h = 1080;
+    }
+    *tx = db.x + db.w - s_ctx.emu_width / 2 - 150;
+    *ty = db.y + 150;
+    if (*tx < s_ctx.emu_width / 2 + 10) *tx = s_ctx.emu_width / 2 + 10;
+    if (*ty < 10) *ty = 10;
+}
+
+/* ---- Public position / visibility API (called from main_desktop.c) ---- */
+
+void display_hal_set_initial_position(int x, int y)
+{
+    s_ctx.top_center_x = x;
+    s_ctx.top_center_y = y;
+    s_ctx.has_saved_pos = true;
+}
+
+void display_hal_get_top_center(int *x, int *y)
+{
+    if (x) *x = s_ctx.top_center_x;
+    if (y) *y = s_ctx.top_center_y;
+}
+
+void display_hal_set_emote_visible(bool vis)
+{
+    s_ctx.emote_visible = vis;
+}
+
+bool display_hal_is_emote_visible(void)
+{
+    return s_ctx.emote_visible;
+}
+
+void display_hal_set_always_hide(bool on)
+{
+    s_ctx.always_hide = on;
+    if (s_ctx.window) {
+        if (on) display_hal_hide_window();
+        else display_hal_show_window();
+    }
+}
+
+bool display_hal_is_always_hide(void)
+{
+    return s_ctx.always_hide;
+}
+
+void display_hal_save_window_position(void)
+{
+    if (s_ctx.has_saved_pos) save_window_pos();
+}
+
+bool display_hal_recreate_emote(void)
+{
+    if (s_ctx.lua_mode || s_ctx.window) return false;
+    if (!s_ctx.emote_visible) return false;
+
+    int wx, wy;
+    top_center_to_rect(s_ctx.top_center_x, s_ctx.top_center_y,
+                       s_ctx.emu_width, s_ctx.emu_height, TITLE_BAR_H, &wx, &wy);
+    s_ctx.window = create_window_borderless("esp-claw Desktop Simulator",
+                                             s_ctx.emu_width, s_ctx.emu_height,
+                                             TITLE_BAR_H, true);
+    if (!s_ctx.window) return false;
+    SDL_SetWindowPosition(s_ctx.window, wx, wy);
+    apply_window_effects(s_ctx.window);
+
+    s_ctx.renderer = SDL_CreateRenderer(s_ctx.window, -1,
+                                         SDL_RENDERER_ACCELERATED |
+                                         SDL_RENDERER_PRESENTVSYNC);
+    if (!s_ctx.renderer) { SDL_DestroyWindow(s_ctx.window); s_ctx.window = NULL; return false; }
+    SDL_SetRenderDrawColor(s_ctx.renderer, 0, 0, 0, 255);
+
+    if (recreate_surface(s_ctx.emu_width, s_ctx.emu_height) != ESP_OK) {
+        SDL_DestroyRenderer(s_ctx.renderer);
+        SDL_DestroyWindow(s_ctx.window);
+        s_ctx.renderer = NULL;
+        s_ctx.window = NULL;
+        return false;
+    }
+    SDL_FillRect(s_ctx.surface, NULL, 0x0000);
+
+    s_ctx.expected_w = s_ctx.emu_width;
+    s_ctx.expected_h = s_ctx.emu_height + TITLE_BAR_H;
+
+    pthread_mutex_lock(&s_input.mutex);
+    s_input.window_w = s_ctx.emu_width;
+    s_input.window_h = s_ctx.emu_height;
+    s_input.scale_x = 1.0f;
+    s_input.scale_y = 1.0f;
+    pthread_mutex_unlock(&s_input.mutex);
+
+    ESP_LOGI(TAG, "Emote window recreated %dx%d at %d,%d",
+             s_ctx.emu_width, s_ctx.emu_height, wx, wy);
+    return true;
 }
 
 esp_err_t display_hal_create(esp_lcd_panel_handle_t panel_handle,
@@ -381,14 +585,26 @@ esp_err_t display_hal_create(esp_lcd_panel_handle_t panel_handle,
         s_ctx.expected_h = s_ctx.emu_height + TITLE_BAR_H;
         s_ctx.lua_mode = false;
 
+        /* Compute default top-center if not set */
+        if (!s_ctx.has_saved_pos) {
+            compute_default_position(&s_ctx.top_center_x, &s_ctx.top_center_y);
+            s_ctx.has_saved_pos = true;
+        }
+
+        int wx, wy;
+        top_center_to_rect(s_ctx.top_center_x, s_ctx.top_center_y,
+                           s_ctx.emu_width, s_ctx.emu_height, TITLE_BAR_H,
+                           &wx, &wy);
         s_ctx.window = create_window_borderless("esp-claw Desktop Simulator",
                                                  s_ctx.emu_width, s_ctx.emu_height,
-                                                 TITLE_BAR_H);
+                                                 TITLE_BAR_H, true);
         if (!s_ctx.window) {
             ESP_LOGE(TAG, "SDL_CreateWindow failed: %s", SDL_GetError());
             SDL_Quit();
             return ESP_FAIL;
         }
+        SDL_SetWindowPosition(s_ctx.window, wx, wy);
+        apply_window_effects(s_ctx.window);
 
         s_ctx.renderer = SDL_CreateRenderer(s_ctx.window, -1,
                                              SDL_RENDERER_ACCELERATED |
@@ -408,6 +624,7 @@ esp_err_t display_hal_create(esp_lcd_panel_handle_t panel_handle,
             return ESP_FAIL;
         }
 
+        s_ctx.emote_visible = true;
         s_main_thread = pthread_self();
         goto init_fonts_and_input;
     }
@@ -548,9 +765,13 @@ static bool process_sdl_events(void)
     while (SDL_PollEvent(&ev)) {
         switch (ev.type) {
         case SDL_QUIT:
-            ESP_LOGI(TAG, "Window closed by user");
-            g_display_quit_requested = true;
-            quit_seen = true;
+            if (s_ctx.lua_mode) {
+                SDL_MinimizeWindow(s_ctx.window);
+            } else {
+                ESP_LOGI(TAG, "Window closed by user");
+                g_display_quit_requested = true;
+                quit_seen = true;
+            }
             break;
 
         case SDL_MOUSEMOTION:
@@ -586,16 +807,32 @@ static bool process_sdl_events(void)
             /* Title bar clicks */
             if (s_ctx.title_bar_h > 0 && ev.button.y < s_ctx.title_bar_h) {
                 if (pressed && ev.button.button == SDL_BUTTON_LEFT) {
-                    /* Minimize button area */
-                    if (ev.button.x >= s_ctx.surf_w - TITLE_BAR_BTN_W - 2) {
-                        s_ctx.title_minimize_hit = true;
+                    /* Minimize button area (top-right, same for both modes) */
+                    int btn_area_w = (s_ctx.lua_mode) ? TITLE_BAR_BTN_W : TITLE_BAR_BTN_W;
+                    if (ev.button.x >= s_ctx.surf_w - btn_area_w - 2) {
+                        if (s_ctx.lua_mode) {
+                            SDL_MinimizeWindow(s_ctx.window);
+                        } else {
+                            s_ctx.title_minimize_hit = true;
+                        }
                     } else {
+                        SDL_RaiseWindow(s_ctx.window);
                         s_ctx.title_dragging = true;
                         s_ctx.title_drag_x = ev.button.x;
                         s_ctx.title_drag_y = ev.button.y;
                     }
                 } else if (!pressed) {
-                    s_ctx.title_dragging = false;
+                    if (s_ctx.title_dragging) {
+                        s_ctx.title_dragging = false;
+                        /* Save top-center position on drag end */
+                        int wx, wy;
+                        SDL_GetWindowPosition(s_ctx.window, &wx, &wy);
+                        int win_w = s_ctx.lua_mode ? s_ctx.width : s_ctx.emu_width;
+                        s_ctx.top_center_x = wx + win_w / 2;
+                        s_ctx.top_center_y = wy;
+                        s_ctx.has_saved_pos = true;
+                        save_window_pos();
+                    }
                 }
                 break;
             }
@@ -698,6 +935,16 @@ static bool process_sdl_events(void)
                                       s_ctx.expected_w, s_ctx.expected_h);
                 }
             }
+            /* Save top-center position after native drag (SDL_SetWindowHitTest) */
+            if (ev.window.event == SDL_WINDOWEVENT_MOVED) {
+                int wx, wy;
+                SDL_GetWindowPosition(s_ctx.window, &wx, &wy);
+                int win_w = s_ctx.lua_mode ? s_ctx.width : s_ctx.emu_width;
+                s_ctx.top_center_x = wx + win_w / 2;
+                s_ctx.top_center_y = wy;
+                s_ctx.has_saved_pos = true;
+                save_window_pos();
+            }
             break;
         }
     }
@@ -726,17 +973,30 @@ esp_err_t display_hal_present(void)
                 s_ctx.frame_active = false;
                 s_ctx.pending_switch = false;
 
+                /* Remember emote visibility for restore decision */
+                s_ctx.emote_was_visible = s_ctx.emote_visible;
+                s_ctx.emote_visible = false;
+
                 s_ctx.width  = lw;
                 s_ctx.height = lh;
                 s_ctx.title_bar_h = TITLE_BAR_H;
 
+                int wx, wy;
+                top_center_to_rect(s_ctx.top_center_x, s_ctx.top_center_y,
+                                   lw, lh, TITLE_BAR_H, &wx, &wy);
                 s_ctx.window = create_window_borderless("esp-claw Lua Display",
-                                                         lw, lh, TITLE_BAR_H);
+                                                         lw, lh, TITLE_BAR_H, false);
                 if (!s_ctx.window) {
                     ESP_LOGE(TAG, "Lifecycle create: SDL_CreateWindow(%dx%d) failed: %s",
                              lw, lh, SDL_GetError());
                     lc_result = ESP_FAIL;
                     goto lifecycle_done;
+                }
+                SDL_SetWindowPosition(s_ctx.window, wx, wy);
+                apply_window_effects(s_ctx.window);
+
+                if (s_ctx.always_hide) {
+                    display_hal_hide_window();
                 }
 
                 s_ctx.renderer = SDL_CreateRenderer(s_ctx.window, -1,
@@ -773,7 +1033,7 @@ esp_err_t display_hal_present(void)
                 s_input.scale_y = 1.0f;
                 pthread_mutex_unlock(&s_input.mutex);
 
-                ESP_LOGI(TAG, "Window created for Lua: %dx%d", lw, lh);
+                ESP_LOGI(TAG, "Window created for Lua: %dx%d at %d,%d", lw, lh, wx, wy);
 
             } else if (op == 2) {
                 /* destroy (from Lua deinit): switch back to emote window */
@@ -789,53 +1049,67 @@ esp_err_t display_hal_present(void)
                 s_ctx.lua_mode = false;
                 s_ctx.pending_switch = false;
 
-                /* Always re-create the emote window so emote engine can resume */
-                s_ctx.title_bar_h = TITLE_BAR_H;
-                s_ctx.window = create_window_borderless("esp-claw Desktop Simulator",
-                                                         s_ctx.emu_width, s_ctx.emu_height,
-                                                         TITLE_BAR_H);
-                if (!s_ctx.window) {
-                    ESP_LOGE(TAG, "Lifecycle destroy: SDL_CreateWindow failed: %s",
-                             SDL_GetError());
-                    lc_result = ESP_FAIL;
-                    goto lifecycle_done;
+                if (s_ctx.emote_was_visible) {
+                    /* Re-create emote window — user had it visible before lua */
+                    s_ctx.title_bar_h = TITLE_BAR_H;
+
+                    int wx, wy;
+                    top_center_to_rect(s_ctx.top_center_x, s_ctx.top_center_y,
+                                       s_ctx.emu_width, s_ctx.emu_height,
+                                       TITLE_BAR_H, &wx, &wy);
+                    s_ctx.window = create_window_borderless("esp-claw Desktop Simulator",
+                                                             s_ctx.emu_width, s_ctx.emu_height,
+                                                             TITLE_BAR_H, true);
+                    if (!s_ctx.window) {
+                        ESP_LOGE(TAG, "Lifecycle destroy: SDL_CreateWindow failed: %s",
+                                 SDL_GetError());
+                        lc_result = ESP_FAIL;
+                        goto lifecycle_done;
+                    }
+                    SDL_SetWindowPosition(s_ctx.window, wx, wy);
+                    apply_window_effects(s_ctx.window);
+
+                    s_ctx.renderer = SDL_CreateRenderer(s_ctx.window, -1,
+                                                         SDL_RENDERER_ACCELERATED |
+                                                         SDL_RENDERER_PRESENTVSYNC);
+                    if (!s_ctx.renderer) {
+                        ESP_LOGE(TAG, "Lifecycle destroy: SDL_CreateRenderer failed: %s",
+                                 SDL_GetError());
+                        SDL_DestroyWindow(s_ctx.window);
+                        s_ctx.window = NULL;
+                        lc_result = ESP_FAIL;
+                        goto lifecycle_done;
+                    }
+                    SDL_SetRenderDrawColor(s_ctx.renderer, 0, 0, 0, 255);
+
+                    if (recreate_surface(s_ctx.emu_width, s_ctx.emu_height) != ESP_OK) {
+                         SDL_DestroyRenderer(s_ctx.renderer);
+                         SDL_DestroyWindow(s_ctx.window);
+                         s_ctx.renderer = NULL;
+                         s_ctx.window = NULL;
+                         lc_result = ESP_FAIL;
+                         goto lifecycle_done;
+                    }
+                    SDL_FillRect(s_ctx.surface, NULL, 0x0000);
+                    s_ctx.expected_w = s_ctx.emu_width;
+                    s_ctx.expected_h = s_ctx.emu_height + TITLE_BAR_H;
+                    s_ctx.emote_visible = true;
+
+                    pthread_mutex_lock(&s_input.mutex);
+                    s_input.window_w = s_ctx.emu_width;
+                    s_input.window_h = s_ctx.emu_height;
+                    s_input.scale_x = 1.0f;
+                    s_input.scale_y = 1.0f;
+                    pthread_mutex_unlock(&s_input.mutex);
+
+                    ESP_LOGI(TAG, "Window switched back to emote %dx%d (was_lua=%d)",
+                             s_ctx.emu_width, s_ctx.emu_height, was_lua);
+                } else {
+                    /* User had emote hidden — don't recreate, leave window NULL */
+                    s_ctx.surf_w = 0;
+                    s_ctx.surf_h = 0;
+                    ESP_LOGI(TAG, "Lua window destroyed, emote stays hidden (was_lua=%d)", was_lua);
                 }
-
-                s_ctx.renderer = SDL_CreateRenderer(s_ctx.window, -1,
-                                                     SDL_RENDERER_ACCELERATED |
-                                                     SDL_RENDERER_PRESENTVSYNC);
-                if (!s_ctx.renderer) {
-                    ESP_LOGE(TAG, "Lifecycle destroy: SDL_CreateRenderer failed: %s",
-                             SDL_GetError());
-                    SDL_DestroyWindow(s_ctx.window);
-                    s_ctx.window = NULL;
-                    lc_result = ESP_FAIL;
-                    goto lifecycle_done;
-                }
-                SDL_SetRenderDrawColor(s_ctx.renderer, 0, 0, 0, 255);
-
-                if (recreate_surface(s_ctx.emu_width, s_ctx.emu_height) != ESP_OK) {
-                    SDL_DestroyRenderer(s_ctx.renderer);
-                    SDL_DestroyWindow(s_ctx.window);
-                    s_ctx.renderer = NULL;
-                    s_ctx.window = NULL;
-                    lc_result = ESP_FAIL;
-                    goto lifecycle_done;
-                }
-                SDL_FillRect(s_ctx.surface, NULL, 0x0000);
-
-                s_ctx.expected_w = s_ctx.emu_width;
-                s_ctx.expected_h = s_ctx.emu_height + TITLE_BAR_H;
-
-                pthread_mutex_lock(&s_input.mutex);
-                s_input.window_w = s_ctx.emu_width;
-                s_input.window_h = s_ctx.emu_height;
-                s_input.scale_x = 1.0f;
-                s_input.scale_y = 1.0f;
-                pthread_mutex_unlock(&s_input.mutex);
-
-                ESP_LOGI(TAG, "Window switched back to emote %dx%d (was_lua=%d)",
-                         s_ctx.emu_width, s_ctx.emu_height, was_lua);
             }
 
         lifecycle_done:
@@ -857,6 +1131,12 @@ esp_err_t display_hal_present(void)
             int new_w = target_lua ? s_ctx.width  : s_ctx.emu_width;
             int new_h = target_lua ? s_ctx.height : s_ctx.emu_height;
 
+            /* Remember emote visibility for restore decision */
+            if (target_lua) {
+                s_ctx.emote_was_visible = s_ctx.emote_visible;
+                s_ctx.emote_visible = false;
+            }
+
             /* Destroy current window and all associated resources */
             if (s_ctx.texture)  { SDL_DestroyTexture(s_ctx.texture);   s_ctx.texture = NULL; }
             if (s_ctx.surface)  { SDL_FreeSurface(s_ctx.surface);      s_ctx.surface = NULL; }
@@ -869,12 +1149,23 @@ esp_err_t display_hal_present(void)
                 ? "esp-claw Lua Display"
                 : "esp-claw Desktop Simulator";
             s_ctx.title_bar_h = TITLE_BAR_H;
-            s_ctx.window = create_window_borderless(title, new_w, new_h, TITLE_BAR_H);
+
+            int wx, wy;
+            top_center_to_rect(s_ctx.top_center_x, s_ctx.top_center_y,
+                               new_w, new_h, TITLE_BAR_H, &wx, &wy);
+            s_ctx.window = create_window_borderless(title, new_w, new_h,
+                                                    TITLE_BAR_H, !target_lua);
             if (!s_ctx.window) {
                 ESP_LOGE(TAG, "Mode switch: SDL_CreateWindow(%dx%d) failed: %s",
                          new_w, new_h, SDL_GetError());
                 SDL_Quit();
                 return ESP_FAIL;
+            }
+            SDL_SetWindowPosition(s_ctx.window, wx, wy);
+            apply_window_effects(s_ctx.window);
+
+            if (target_lua && s_ctx.always_hide) {
+                display_hal_hide_window();
             }
 
             s_ctx.renderer = SDL_CreateRenderer(s_ctx.window, -1,
@@ -919,6 +1210,8 @@ esp_err_t display_hal_present(void)
         }
 
         /* ---- Render current frame (always render when surface exists) ---- */
+        /* Process events BEFORE rendering for low-latency drag response */
+        process_sdl_events();
         if (s_ctx.texture && s_ctx.surface) {
             SDL_UpdateTexture(s_ctx.texture, NULL,
                               s_ctx.surface->pixels, s_ctx.surf_w * 2);

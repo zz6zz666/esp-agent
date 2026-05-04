@@ -34,6 +34,12 @@ bool tray_icon_quit_requested(void);
 /** Set the SDL2 window HWND for show/hide control. */
 void tray_icon_set_sdl_window(void *hwnd);
 
+/** Check if "Always Hide Windows" is enabled in tray menu. */
+bool tray_always_hide_is_enabled(void);
+
+/** Toggle the "Always Hide Windows" tray setting. */
+void tray_always_hide_toggle(void);
+
 #ifdef __cplusplus
 }
 #endif

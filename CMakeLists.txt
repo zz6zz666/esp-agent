@@ -381,6 +381,7 @@ if(WIN32)
         bcrypt      # BCryptGenRandom
         ssl         # OpenSSL (WebSocket / AES / MD5)
         crypto      # OpenSSL crypto
+        dwmapi      # DWM shadow/rounded corners
     )
 else()
     target_link_libraries(esp-claw-desktop PRIVATE

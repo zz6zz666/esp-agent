@@ -33,10 +33,13 @@ static HMENU  s_menu = NULL;
 #define IDM_HIDE     2002
 #define IDM_EXIT     2003
 #define IDM_AUTOSTART 2004
+#define IDM_ALWAYS_HIDE 2005
 #define IDI_CLAW     1
 
 #define REG_AUTOSTART_KEY "Software\\Microsoft\\Windows\\CurrentVersion\\Run"
 #define REG_AUTOSTART_VAL "esp-agent"
+#define REG_APP_KEY       "Software\\esp-agent"
+#define REG_ALWAYS_HIDE   "AlwaysHide"
 
 /* ---- Forward decls ---- */
 static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
@@ -83,6 +86,9 @@ bool tray_icon_init(void)
     s_menu = CreatePopupMenu();
     AppendMenuA(s_menu, MF_STRING, IDM_SHOW, "Show Window");
     AppendMenuA(s_menu, MF_STRING, IDM_HIDE, "Hide to Tray");
+    AppendMenuA(s_menu, MF_SEPARATOR, 0, NULL);
+    AppendMenuA(s_menu, MF_STRING | (tray_always_hide_is_enabled() ? MF_CHECKED : 0),
+                IDM_ALWAYS_HIDE, "Always Hide Windows");
     AppendMenuA(s_menu, MF_SEPARATOR, 0, NULL);
     AppendMenuA(s_menu, MF_STRING | (tray_autostart_is_enabled() ? MF_CHECKED : 0),
                 IDM_AUTOSTART, "Start with Windows");
@@ -135,8 +141,39 @@ static void tray_autostart_set_enabled(bool enable)
     RegCloseKey(hKey);
 }
 
+/* ---- Always-hide registry helpers ---- */
+
+bool tray_always_hide_is_enabled(void)
+{
+    HKEY hKey;
+    DWORD val = 0, size = sizeof(val);
+    if (RegCreateKeyExA(HKEY_CURRENT_USER, REG_APP_KEY,
+                        0, NULL, 0, KEY_READ, NULL, &hKey, NULL)
+        != ERROR_SUCCESS)
+        return false;
+    LONG rc = RegQueryValueExA(hKey, REG_ALWAYS_HIDE, NULL, NULL,
+                                (LPBYTE)&val, &size);
+    RegCloseKey(hKey);
+    return rc == ERROR_SUCCESS && val != 0;
+}
+
+void tray_always_hide_toggle(void)
+{
+    HKEY hKey;
+    if (RegCreateKeyExA(HKEY_CURRENT_USER, REG_APP_KEY,
+                        0, NULL, 0, KEY_SET_VALUE, NULL, &hKey, NULL)
+        != ERROR_SUCCESS)
+        return;
+    bool cur = tray_always_hide_is_enabled();
+    DWORD val = cur ? 0 : 1;
+    RegSetValueExA(hKey, REG_ALWAYS_HIDE, 0, REG_DWORD,
+                   (const BYTE *)&val, sizeof(val));
+    RegCloseKey(hKey);
+}
+
 void tray_icon_set_sdl_window(void *hwnd)
 {
+    if ((HWND)hwnd == s_sdl_hwnd) return;
     s_sdl_hwnd = (HWND)hwnd;
     /* Remove from taskbar — tray icon is the primary UI surface */
     LONG_PTR ex_style = GetWindowLongPtrA(s_sdl_hwnd, GWL_EXSTYLE);
@@ -205,9 +242,11 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     switch (msg) {
     case WM_TRAYICON:
         if (lp == WM_RBUTTONUP || lp == WM_CONTEXTMENU) {
-            /* Update autostart checkmark before showing menu */
+            /* Update checkmarks before showing menu */
             CheckMenuItem(s_menu, IDM_AUTOSTART,
                 tray_autostart_is_enabled() ? MF_CHECKED : MF_UNCHECKED);
+            CheckMenuItem(s_menu, IDM_ALWAYS_HIDE,
+                tray_always_hide_is_enabled() ? MF_CHECKED : MF_UNCHECKED);
             /* Right-click: show popup menu */
             POINT pt;
             GetCursorPos(&pt);
@@ -231,6 +270,9 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             break;
         case IDM_HIDE:
             tray_icon_hide_window();
+            break;
+        case IDM_ALWAYS_HIDE:
+            tray_always_hide_toggle();
             break;
         case IDM_AUTOSTART: {
             bool cur = tray_autostart_is_enabled();

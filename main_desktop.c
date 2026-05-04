@@ -72,6 +72,15 @@ extern void display_hal_hide_window(void);
 extern void display_hal_show_window(void);
 extern bool display_hal_title_minimize_hit(void);
 
+extern void display_hal_set_initial_position(int x, int y);
+extern void display_hal_get_top_center(int *x, int *y);
+extern void display_hal_set_emote_visible(bool vis);
+extern bool display_hal_is_emote_visible(void);
+extern void display_hal_set_always_hide(bool on);
+extern bool display_hal_is_always_hide(void);
+extern void display_hal_save_window_position(void);
+extern bool display_hal_recreate_emote(void);
+
 #if defined(PLATFORM_WINDOWS)
 # include "tray_icon.h"
 #endif
@@ -849,11 +858,26 @@ int main(int argc, char **argv)
 
     /* ---- SDL2 display (optional) ---- */
     if (display_enabled) {
+        /* Load saved window position */
+        {
+            char pos_path[PATH_MAX];
+            snprintf(pos_path, sizeof(pos_path), "%s/window_pos", abs_data_dir);
+            FILE *pf = fopen(pos_path, "r");
+            if (pf) {
+                int px = 0, py = 0;
+                if (fscanf(pf, "%d %d", &px, &py) == 2) {
+                    display_hal_set_initial_position(px, py);
+                }
+                fclose(pf);
+            }
+        }
         esp_err_t d_err = display_hal_create(NULL, NULL, 0, lcd_width, lcd_height);
         if (d_err != ESP_OK) {
             ESP_LOGW(TAG, "Failed to create display: %s", esp_err_to_name(d_err));
         }
 #if defined(PLATFORM_WINDOWS)
+        /* Sync always-hide from registry */
+        display_hal_set_always_hide(tray_always_hide_is_enabled());
         /* Initialize system tray icon (after SDL window is created) */
         if (display_hal_is_active()) {
             void *native_hwnd = display_hal_get_native_window();
@@ -966,12 +990,44 @@ int main(int argc, char **argv)
         }
         /* Pump tray icon messages */
         tray_icon_pump();
+
+        /* Sync always-hide state */
+        display_hal_set_always_hide(tray_always_hide_is_enabled());
+
+        /* Sync emote visibility from tray icon state */
+        if (display_hal_is_emote_visible() != tray_icon_is_window_visible()) {
+            display_hal_set_emote_visible(tray_icon_is_window_visible());
+            if (display_hal_is_active() && !display_hal_is_emote_visible()) {
+                display_hal_hide_window();
+            }
+        }
+        /* Ensure emote window exists if user wants it visible
+           (may be NULL after lua destroyed it while user clicked Show) */
+        if (display_hal_is_emote_visible()) {
+            if (display_hal_recreate_emote()) {
+                /* Re-apply tray icon to the new emote window */
+                void *hwnd = display_hal_get_native_window();
+                if (hwnd) tray_icon_set_sdl_window(hwnd);
+            }
+        }
 #endif
         /* Custom title bar minimize button */
         if (display_hal_title_minimize_hit()) {
             display_hal_hide_window();
+#if defined(PLATFORM_WINDOWS)
+            tray_icon_hide_window();
+#endif
         }
         display_hal_present();             /* always pump — processes lifecycle ops */
+#if defined(PLATFORM_WINDOWS)
+        /* Refresh tray icon window handle (may change after emote recreation) */
+        if (display_hal_is_active() && !display_hal_is_emote_visible()) {
+            /* Window exists but user wants it hidden — keep hidden */
+        } else if (display_hal_is_active()) {
+            void *hwnd = display_hal_get_native_window();
+            if (hwnd) tray_icon_set_sdl_window(hwnd);
+        }
+#endif
         if (display_hal_is_active()) {
             vTaskDelay(pdMS_TO_TICKS(16)); /* ~60 Hz when rendering */
         } else {
@@ -981,6 +1037,7 @@ int main(int argc, char **argv)
 
     /* Cleanup */
 #if defined(PLATFORM_WINDOWS)
+    display_hal_save_window_position();
     tray_icon_cleanup();
 #endif
     display_hal_destroy();
