@@ -137,7 +137,8 @@ esp_err_t display_hal_create(esp_lcd_panel_handle_t panel_handle,
     }
 
     s_ctx.renderer = SDL_CreateRenderer(s_ctx.window, -1,
-                                         SDL_RENDERER_ACCELERATED);
+                                         SDL_RENDERER_ACCELERATED |
+                                         SDL_RENDERER_PRESENTVSYNC);
     if (!s_ctx.renderer) {
         ESP_LOGE(TAG, "SDL_CreateRenderer failed: %s", SDL_GetError());
         SDL_DestroyWindow(s_ctx.window);
