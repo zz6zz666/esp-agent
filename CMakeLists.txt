@@ -122,6 +122,7 @@ add_compile_definitions(
     CONFIG_LWIP_SNTP_MAX_SERVERS=1
     CONFIG_APP_CLAW_LUA_MODULE_DISPLAY=1
     CONFIG_APP_CLAW_LUA_MODULE_BOARD_MANAGER=1
+    CONFIG_APP_CLAW_LUA_MODULE_CAPABILITY=1
     CONFIG_APP_CLAW_ENABLE_EMOTE=1
     CONFIG_ESP_BOARD_DEV_DISPLAY_LCD_SUPPORT=1
     CONFIG_ESP_CONSOLE_UART_DEFAULT=1
@@ -175,6 +176,8 @@ set(COMMON_INCLUDES
 
     # Lua modules board manager
     ${ESPCLAW_COMPONENTS}/lua_modules/lua_module_board_manager/include
+    # Lua modules call capability
+    ${ESPCLAW_COMPONENTS}/lua_modules/lua_module_call_capability/include
     # deps: LVGL stub header (font types only)
     ${DEPS_DIR}/lvgl
     # deps: SoC stubs
@@ -317,6 +320,9 @@ set(ESPCLAW_SRCS
 
     # lua_module_board_manager (simulated board info)
     ${ESPCLAW_COMPONENTS}/lua_modules/lua_module_board_manager/lua_module_board_manager.c
+
+    # lua_module_call_capability (call cap from Lua)
+    ${ESPCLAW_COMPONENTS}/lua_modules/lua_module_call_capability/src/lua_module_capability.c
 )
 
 # ---- Desktop main ----

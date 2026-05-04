@@ -60,6 +60,10 @@ uint16_t display_hal_get_modifiers(void);
  * Returns true if an event was dequeued. */
 bool display_hal_pop_input_event(input_event_t *out_event);
 
+/* Get the human-readable name for an SDL scancode (e.g. 4→"A", 40→"Return").
+ * Returns "?" if the scancode is out of range or unknown. */
+const char *display_hal_get_scancode_name(int32_t scancode);
+
 #ifdef __cplusplus
 }
 #endif

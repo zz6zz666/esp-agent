@@ -1647,6 +1647,13 @@ bool display_hal_pop_input_event(input_event_t *out_event)
     return true;
 }
 
+const char *display_hal_get_scancode_name(int32_t scancode)
+{
+    if (scancode < 0 || scancode >= SDL_NUM_SCANCODES) return "?";
+    const char *name = SDL_GetScancodeName((SDL_Scancode)scancode);
+    return (name && name[0]) ? name : "?";
+}
+
 /* ---- esp_lcd_touch SDL bridge (makes gfx_touch.c work) ---- */
 
 static esp_lcd_touch_handle_t s_touch_sdl = NULL;
@@ -1664,6 +1671,7 @@ esp_lcd_touch_handle_t esp_lcd_touch_init_sdl(void)
 void esp_lcd_touch_feed_sdl(int16_t x, int16_t y, bool pressed)
 {
     if (!s_touch_sdl) return;
+    ESP_LOGI(TAG, "touch feed: (%d,%d) %s", x, y, pressed ? "DOWN" : "UP");
     s_touch_sdl->last_point.x = x;
     s_touch_sdl->last_point.y = y;
     s_touch_sdl->last_point.strength = pressed ? 128 : 0;
@@ -1688,6 +1696,8 @@ esp_err_t esp_lcd_touch_get_data(esp_lcd_touch_handle_t tp,
     if (tp->has_data) {
         out[0] = tp->last_point;
         *count = 1;
+        ESP_LOGI(TAG, "touch get_data: (%d,%d) strength=%d",
+                 out[0].x, out[0].y, out[0].strength);
     } else {
         *count = 0;
     }
