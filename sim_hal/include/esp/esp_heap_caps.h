@@ -23,8 +23,29 @@ extern "C" {
 #define MALLOC_CAP_DEFAULT  (1 << 3)
 #define MALLOC_CAP_8BIT     (1 << 4)
 
-/* Helper: read a /proc/meminfo key, return value in bytes (file reports kB) */
-static inline size_t _heap_proc_meminfo_read(const char *key)
+/* Helper: read host memory statistics */
+#if defined(PLATFORM_WINDOWS)
+# define WIN32_LEAN_AND_MEAN
+# include <windows.h>
+
+static inline size_t _heap_meminfo_read(const char *key)
+{
+    MEMORYSTATUSEX mex;
+    mex.dwLength = sizeof(mex);
+    if (!GlobalMemoryStatusEx(&mex)) return 0;
+
+    if (strcmp(key, "MemTotal:") == 0)
+        return (size_t)mex.ullTotalPhys;
+    if (strcmp(key, "MemAvailable:") == 0)
+        return (size_t)mex.ullAvailPhys;
+    if (strcmp(key, "MemFree:") == 0)
+        return (size_t)(mex.ullAvailPhys > mex.ullTotalPhys / 10
+                        ? mex.ullAvailPhys - mex.ullTotalPhys / 10
+                        : mex.ullAvailPhys);
+    return 0;
+}
+#else
+static inline size_t _heap_meminfo_read(const char *key)
 {
     FILE *f = fopen("/proc/meminfo", "r");
     if (!f) return 0;
@@ -39,6 +60,7 @@ static inline size_t _heap_proc_meminfo_read(const char *key)
     fclose(f);
     return val_kb * 1024;
 }
+#endif
 
 /* Track historical minimum free (internal RAM only) */
 static inline size_t _heap_min_tracker(size_t cur)
@@ -60,7 +82,12 @@ static inline void *heap_caps_malloc(size_t size, uint32_t caps)
 static inline void *heap_caps_aligned_alloc(size_t alignment, size_t size, uint32_t caps)
 {
     (void)caps;
-    return aligned_alloc(alignment, (size + alignment - 1) & ~(alignment - 1));
+    size_t padded = (size + alignment - 1) & ~(alignment - 1);
+#if defined(PLATFORM_WINDOWS)
+    return _aligned_malloc(padded, alignment);
+#else
+    return aligned_alloc(alignment, padded);
+#endif
 }
 
 static inline void heap_caps_free(void *ptr)
@@ -73,13 +100,13 @@ static inline void heap_caps_free(void *ptr)
 static inline size_t heap_caps_get_total_size(uint32_t caps)
 {
     if (caps & MALLOC_CAP_SPIRAM) return 0; /* no PSRAM on desktop */
-    return _heap_proc_meminfo_read("MemTotal:");
+    return _heap_meminfo_read("MemTotal:");
 }
 
 static inline size_t heap_caps_get_free_size(uint32_t caps)
 {
     if (caps & MALLOC_CAP_SPIRAM) return 0;
-    return _heap_proc_meminfo_read("MemAvailable:");
+    return _heap_meminfo_read("MemAvailable:");
 }
 
 static inline size_t heap_caps_get_minimum_free_size(uint32_t caps)
@@ -93,7 +120,7 @@ static inline size_t heap_caps_get_largest_free_block(uint32_t caps)
     if (caps & MALLOC_CAP_SPIRAM) return 0;
     /* /proc/meminfo doesn't expose largest contiguous block easily.
        Use MemFree as an approximation. */
-    return _heap_proc_meminfo_read("MemFree:");
+    return _heap_meminfo_read("MemFree:");
 }
 
 #ifdef __cplusplus

@@ -15,6 +15,16 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
+#if defined(PLATFORM_WINDOWS)
+# define WIN32_LEAN_AND_MEAN
+# include <windows.h>
+# include <direct.h>
+# define mkdir_safe(path, mode) _mkdir(path)
+#else
+# include <unistd.h>
+# define mkdir_safe(path, mode) mkdir(path, mode)
+#endif
+
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
 
@@ -33,6 +43,73 @@ static int          s_font_path_count = 0;
 static TTF_Font    *s_font_stack[MAX_FONT_STACK] = {0};
 static int          s_font_stack_count = 0;
 static int          s_font_stack_ptsize = 0;
+
+/* ---- Platform-aware helper ---- */
+
+static const char *get_home_dir(void)
+{
+#ifdef PLATFORM_WINDOWS
+    const char *home = getenv("USERPROFILE");
+    if (!home) home = getenv("HOMEDRIVE");
+#else
+    const char *home = getenv("HOME");
+#endif
+    if (!home) home = ".";
+    return home;
+}
+
+static void try_font_path(const char *dir, const char *name,
+                           const char *label)
+{
+    if (s_font_path_count >= MAX_FONT_STACK) return;
+    char full[512];
+    snprintf(full, sizeof(full), "%s/%s", dir, name);
+    TTF_Font *test = TTF_OpenFont(full, 16);
+    if (test) {
+        TTF_CloseFont(test);
+        s_font_paths[s_font_path_count]     = strdup(full);
+        s_font_labels[s_font_path_count]    = label;
+        s_font_path_count++;
+    }
+}
+
+/* Probe font directories: program fonts/, system paths, then fallback. */
+static void discover_fonts(void)
+{
+    s_font_path_count = 0;
+
+#if defined(PLATFORM_WINDOWS)
+    /* 1. fonts/ alongside the executable */
+    char exe_dir[512] = ".";
+    GetModuleFileNameA(NULL, exe_dir, sizeof(exe_dir));
+    char *slash = strrchr(exe_dir, '\\');
+    if (slash) { *slash = '\0'; snprintf(exe_dir + (slash - exe_dir), sizeof(exe_dir) - (size_t)(slash - exe_dir), "\\fonts"); }
+
+    try_font_path(exe_dir, "DejaVuSans.ttf",     "DejaVu Sans");
+    try_font_path(exe_dir, "NotoColorEmoji.ttf",  "Noto Color Emoji");
+    try_font_path(exe_dir, "arial.ttf",            "Arial");
+    try_font_path(exe_dir, "segoeui.ttf",          "Segoe UI");
+
+    /* 2. System fonts */
+    const char *windir = getenv("WINDIR");
+    if (!windir) windir = "C:\\Windows";
+    char sysdir[512];
+    snprintf(sysdir, sizeof(sysdir), "%s\\Fonts", windir);
+    try_font_path(sysdir, "arial.ttf",            "Arial");
+    try_font_path(sysdir, "segoeui.ttf",           "Segoe UI");
+    try_font_path(sysdir, "seguiemj.ttf",          "Segoe UI Emoji");
+#else
+    /* 1. fonts/ alongside the executable (if realpath works) */
+    try_font_path("fonts", "DejaVuSans.ttf",      "DejaVu Sans");
+    try_font_path("fonts", "NotoColorEmoji.ttf",   "Noto Color Emoji");
+    try_font_path("fonts", "wqy-zenhei.ttc",       "WQY ZenHei");
+
+    /* 2. Standard Linux system fonts */
+    try_font_path("/usr/share/fonts/truetype/wqy",     "wqy-zenhei.ttc",       "WQY ZenHei");
+    try_font_path("/usr/share/fonts/truetype/dejavu",  "DejaVuSans.ttf",       "DejaVu Sans");
+    try_font_path("/usr/share/fonts/truetype/noto",    "NotoColorEmoji.ttf",    "Noto Color Emoji");
+#endif
+}
 
 /* ---- Internal state ---- */
 typedef struct {
@@ -204,30 +281,9 @@ esp_err_t display_hal_create(esp_lcd_panel_handle_t panel_handle,
         ESP_LOGW(TAG, "TTF_Init failed: %s", TTF_GetError());
         s_ttf_ok = false;
     } else {
-        /* Register font files in priority order.  The first font that provides
+        /* Discover font files in priority order.  The first font that provides
            a glyph is used; later fonts act as fallback for missing codepoints. */
-        struct {
-            const char *path;
-            const char *label;
-        } candidates[] = {
-            { "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",       "WQY ZenHei" },
-            { "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",    "DejaVu Sans" },
-            { "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",  "Noto Color Emoji" },
-        };
-        int n = sizeof(candidates) / sizeof(candidates[0]);
-
-        for (int i = 0; i < n && s_font_path_count < MAX_FONT_STACK; i++) {
-            TTF_Font *test = TTF_OpenFont(candidates[i].path, 16);
-            if (test) {
-                TTF_CloseFont(test);
-                s_font_paths[s_font_path_count]     = candidates[i].path;
-                s_font_labels[s_font_path_count]    = candidates[i].label;
-                s_font_path_count++;
-            } else {
-                ESP_LOGW(TAG, "Font not found, skipping: %s (%s)",
-                         candidates[i].label, candidates[i].path);
-            }
-        }
+        discover_fonts();
 
         if (s_font_path_count > 0) {
             s_ttf_ok = true;
@@ -714,9 +770,7 @@ static int utf8_encode(Uint32 cp, char *buf)
 
 static void glyph_cache_get_dir(char *buf, size_t bufsz)
 {
-    const char *home = getenv("HOME");
-    if (!home) home = "/tmp";
-    snprintf(buf, bufsz, "%s/.esp-agent/glyph_cache", home);
+    snprintf(buf, bufsz, "%s/.esp-agent/glyph_cache", get_home_dir());
 }
 
 static void glyph_cache_clear(void)
@@ -766,7 +820,7 @@ static void glyph_cache_save(Uint32 cp, int ptsize, int font_idx,
 
     char dir[512];
     glyph_cache_get_dir(dir, sizeof(dir));
-    mkdir(dir, 0755);
+    mkdir_safe(dir, 0755);
 
     char path[768];
     snprintf(path, sizeof(path), "%s/%X_%d_%d_%X.cache",
@@ -833,7 +887,7 @@ static void glyph_cache_load_all(void)
 {
     char dir[512];
     glyph_cache_get_dir(dir, sizeof(dir));
-    mkdir(dir, 0755);
+    mkdir_safe(dir, 0755);
 
     DIR *d = opendir(dir);
     if (!d) return;

@@ -60,6 +60,92 @@ typedef struct {
 #define WIFI_PSK_MIN_LEN 8
 #define WIFI_PSK_MAX_LEN 64
 
+/* ---- Platform-specific WiFi helpers ---- */
+
+#if defined(PLATFORM_WINDOWS)
+# define WIN32_LEAN_AND_MEAN
+# include <windows.h>
+# include <wlanapi.h>
+# pragma comment(lib, "wlanapi.lib")
+
+/* WLAN API wrapper */
+static inline HANDLE _wifi_wlan_open(void) {
+    DWORD negotiatedVersion;
+    HANDLE hClient = NULL;
+    DWORD ret = WlanOpenHandle(2, NULL, &negotiatedVersion, &hClient);
+    if (ret == ERROR_SERVICE_NOT_ACTIVE || ret != ERROR_SUCCESS) {
+        /* Try version 1 */
+        ret = WlanOpenHandle(1, NULL, &negotiatedVersion, &hClient);
+    }
+    return (ret == ERROR_SUCCESS) ? hClient : NULL;
+}
+
+/* Helper: find first wireless interface and fill SSID / RSSI */
+static inline int _wifi_fill_ap_info(wifi_ap_record_t *info)
+{
+    memset(info, 0, sizeof(*info));
+
+    HANDLE hClient = _wifi_wlan_open();
+    if (!hClient) return 0;
+
+    PWLAN_INTERFACE_INFO_LIST pIfList = NULL;
+    if (WlanEnumInterfaces(hClient, NULL, &pIfList) != ERROR_SUCCESS) {
+        WlanCloseHandle(hClient, NULL);
+        return 0;
+    }
+
+    int found = 0;
+    for (DWORD i = 0; i < pIfList->dwNumberOfItems; i++) {
+        PWLAN_INTERFACE_INFO pIfInfo = &pIfList->InterfaceInfo[i];
+        if (pIfInfo->isState != wlan_interface_state_connected) continue;
+
+        /* Get network BSS list for RSSI */
+        PWLAN_BSS_LIST pBssList = NULL;
+        if (WlanGetNetworkBssList(hClient, &pIfInfo->InterfaceGuid,
+                NULL, dot11_BSS_type_infrastructure, TRUE, NULL,
+                &pBssList) == ERROR_SUCCESS && pBssList->dwNumberOfItems > 0) {
+            WLAN_BSS_ENTRY *bss = &pBssList->wlanBssEntries[0];
+            info->rssi = bss->lRssi;
+
+            /* Copy SSID */
+            size_t ssid_len = bss->dot11Ssid.uSSIDLength;
+            if (ssid_len > 32) ssid_len = 32;
+            memcpy(info->ssid, bss->dot11Ssid.ucSSID, ssid_len);
+            info->ssid[ssid_len] = '\0';
+
+            found = 1;
+            WlanFreeMemory(pBssList);
+        }
+
+        /* Fallback: try to get SSID from connection attributes */
+        if (!found) {
+            PWLAN_CONNECTION_ATTRIBUTES pConnAttr = NULL;
+            DWORD attrSize = sizeof(WLAN_CONNECTION_ATTRIBUTES);
+            if (WlanQueryInterface(hClient, &pIfInfo->InterfaceGuid,
+                    wlan_intf_opcode_current_connection, NULL,
+                    &attrSize, (PVOID *)&pConnAttr, NULL) == ERROR_SUCCESS) {
+                if (pConnAttr && pConnAttr->isState == wlan_interface_state_connected) {
+                    PWLAN_ASSOCIATION_ATTRIBUTES assoc = &pConnAttr->wlanAssociationAttributes;
+                    size_t ssid_len = assoc->dot11Ssid.uSSIDLength;
+                    if (ssid_len > 32) ssid_len = 32;
+                    memcpy(info->ssid, assoc->dot11Ssid.ucSSID, ssid_len);
+                    info->ssid[ssid_len] = '\0';
+                    info->rssi = assoc->wlanSignalQuality / 2 - 100; /* approx */
+                    found = 1;
+                }
+                WlanFreeMemory(pConnAttr);
+            }
+        }
+
+        if (found) break;
+    }
+
+    WlanFreeMemory(pIfList);
+    WlanCloseHandle(hClient, NULL);
+    return found;
+}
+
+#else
 /* Helper: find first wireless interface name.  Returns 1 on success. */
 static inline int _wifi_find_iface(char *ifname, size_t size)
 {
@@ -67,12 +153,9 @@ static inline int _wifi_find_iface(char *ifname, size_t size)
     if (!f) return 0;
     char line[256];
     int found = 0;
-    /* Skip header lines */
     while (fgets(line, sizeof(line), f)) {
-        /* Look for a line starting with an interface name (not "Inter-" or " face") */
         if (line[0] == ' ' || line[0] == 'I' || line[0] == '\n')
             continue;
-        /* Lines have format: ifname: ... */
         char *colon = strchr(line, ':');
         if (colon) {
             size_t len = (size_t)(colon - line);
@@ -98,12 +181,12 @@ static inline int _wifi_read_ssid(const char *ifname, char *ssid, size_t size)
     fclose(f);
     if (n > 0) {
         ssid[n] = '\0';
-        /* Trim trailing newline */
         if (n > 0 && ssid[n - 1] == '\n') ssid[--n] = '\0';
         return 1;
     }
     return 0;
 }
+#endif
 
 /* ---- Stub implementations ---- */
 
@@ -127,6 +210,11 @@ static inline esp_err_t esp_wifi_get_bandwidth(uint8_t ifx, uint8_t *bw) {
 static inline esp_err_t esp_wifi_sta_get_ap_info(wifi_ap_record_t *info) {
     if (!info) return ESP_ERR_INVALID_ARG;
 
+#if defined(PLATFORM_WINDOWS)
+    if (_wifi_fill_ap_info(info))
+        return ESP_OK;
+    return ESP_ERR_NOT_FOUND;
+#else
     char ifname[32] = {0};
     if (!_wifi_find_iface(ifname, sizeof(ifname)))
         return ESP_ERR_NOT_FOUND;
@@ -148,13 +236,11 @@ static inline esp_err_t esp_wifi_sta_get_ap_info(wifi_ap_record_t *info) {
             int rssi_raw = -45;
             while (fgets(line, sizeof(line), f)) {
                 if (strncmp(line, ifname, strlen(ifname)) == 0) {
-                    /* Format: ifname: status quality(link|level|noise) ... */
                     char *q = strstr(line, "link");
                     if (q) {
                         int link, level, noise;
                         if (sscanf(q, "link=%d level=%d noise=%d", &link, &level, &noise) == 3
                             || sscanf(q, "link=%d level=%d", &link, &level) == 2) {
-                            /* level is typically negative dBm */
                             rssi_raw = level;
                         }
                     }
@@ -169,6 +255,7 @@ static inline esp_err_t esp_wifi_sta_get_ap_info(wifi_ap_record_t *info) {
     info->authmode = WIFI_AUTH_WPA2_PSK;
     info->primary = 1;
     return ESP_OK;
+#endif
 }
 
 static inline int8_t esp_wifi_sta_get_rssi(void) {

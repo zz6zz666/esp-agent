@@ -1,7 +1,7 @@
 # Feature Support — esp-claw Desktop Simulator
 
 This document audits every feature of the upstream `esp-claw` embedded AI agent
-framework and reports its status in the Linux desktop simulator.
+framework and reports its status in the cross-platform (Linux + Windows) desktop simulator.
 
 **Status key:**
 - **Supported** — fully functional, tested
@@ -126,7 +126,7 @@ framework and reports its status in the Linux desktop simulator.
 | Feature | Status | Notes |
 |---------|--------|-------|
 | Unix socket CLI | Supported | `~/.esp-agent/agent.sock`, one-shot request/response |
-| `esp-agent` wrapper script | Supported | Full management CLI (config, start, stop, status, logs, build, etc.) |
+| `esp-agent` CLI tool | Supported | Cross-platform management CLI (config, start, stop, status, logs, build, etc.). Linux: shell script; Windows: compiled C binary. |
 | Help command | Supported | All registered commands listed |
 | `ask <prompt>` | Supported | Multi-turn agent prompt via socket |
 | `ask_once <prompt>` | Supported | Single-turn prompt (no session) |
@@ -423,13 +423,18 @@ simulator build (`CONFIG_APP_CLAW_LUA_MODULE_*` defines not set):
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| CMake build (Release) | Supported | `./esp-agent build` |
+| CMake build (Release) | Supported | `esp-agent build` (Linux + Windows) |
 | CMake build (Debug) | Supported | `cmake -DCMAKE_BUILD_TYPE=Debug` |
-| `.deb` packaging | Supported | `dpkg-buildpackage` |
-| systemd user service | Supported | `esp-agent service enable\|start\|stop\|status` |
-| `esp-agent config` wizard | Supported | Interactive setup |
+| `.deb` packaging (Linux) | Supported | `dpkg-buildpackage` |
+| `.zip` packaging (Windows) | Supported | `package.bat` with PowerShell |
+| systemd user service | Supported | Linux only; `esp-agent service enable\|start\|stop\|status` |
+| `esp-agent config` wizard | Supported | Interactive setup (cross-platform) |
 | `esp-agent clean` | Supported | Remove build/ directory |
-| `_run_desktop.sh` dev script | Supported | Quick foreground run for development |
+| `_run_desktop.sh` dev script | Supported | Linux foreground run |
+| `_run_desktop.bat` dev script | Supported | Windows quick launcher (run/build/debug/clean/daemon) |
+| Platform abstraction layer | Supported | `platform.h` / `platform_posix.h` / `platform_win32.h` |
+| Windows Named Pipe IPC | Supported | `\\.\pipe\esp-agent` replacing Unix socket |
+| MinGW-w64 (MSYS2) build | Supported | CMake + MinGW Makefiles generator |
 
 ---
 

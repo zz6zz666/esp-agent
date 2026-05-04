@@ -6,14 +6,12 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <pthread.h>
-#include "freertos/portmacro.h"
-#include "freertos/projdefs.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* --- Base types --- */
+/* --- Base types (defined before portmacro.h needs them) --- */
 typedef void (*TaskFunction_t)(void *);
 typedef void * TaskHandle_t;
 typedef TaskHandle_t QueueHandle_t;
@@ -22,11 +20,12 @@ typedef int32_t  BaseType_t;
 typedef uint32_t UBaseType_t;
 typedef uint32_t TickType_t;
 typedef uint32_t StackType_t;
-typedef uint32_t UBaseType_t;
 
 #define tskIDLE_PRIORITY 0
 #define tskNO_AFFINITY   (-1)
-#define portNUM_PROCESSORS ((UBaseType_t)sysconf(_SC_NPROCESSORS_CONF))
+
+#include "freertos/portmacro.h"
+#include "freertos/projdefs.h"
 
 #define portMAX_DELAY    UINT32_MAX
 #define pdMS_TO_TICKS(ms) ((TickType_t)(ms))

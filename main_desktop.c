@@ -4,6 +4,7 @@
  * Replaces the ESP32 main.c.  Reads config from ~/.esp-agent/config.json,
  * stores data under ~/.esp-agent/, and optionally disables the SDL2 display.
  */
+#include <dirent.h>
 #include <fcntl.h>
 #include <limits.h>
 #include <signal.h>
@@ -13,8 +14,16 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <sys/wait.h>
 #include <unistd.h>
+
+#if defined(PLATFORM_WINDOWS)
+# define WIN32_LEAN_AND_MEAN
+# include <windows.h>
+# include <direct.h>
+# include <io.h>
+#else
+# include <sys/wait.h>
+#endif
 
 #include "app_claw.h"
 #include "app_capabilities.h"
@@ -35,7 +44,19 @@
 #define ESP_AGENT_VERSION "1.0.0"
 #define DEFAULTS_DIR       "/usr/share/esp-agent/defaults"
 
+/* ---- platform helpers ---- */
+#if defined(PLATFORM_WINDOWS)
+# define safe_mkdir(path, mode)  _mkdir(path)
+# define safe_unlink(path)       _unlink(path)
+# define NULL_DEVICE             "NUL"
+#else
+# define safe_mkdir(path, mode)  mkdir(path, mode)
+# define safe_unlink(path)       unlink(path)
+# define NULL_DEVICE             "/dev/null"
+#endif
+
 static const char *TAG = "desktop_main";
+static char g_abs_data_dir[PATH_MAX] = {0};
 static volatile bool s_running = true;
 
 /* daemon / display state */
@@ -46,6 +67,16 @@ static char g_pid_file_path[PATH_MAX] = {0};
 extern bool display_hal_is_active(void);
 
 /* ---- helpers ---- */
+
+#if defined(PLATFORM_WINDOWS)
+static BOOL WINAPI win_ctrl_handler(DWORD ctrl_type)
+{
+    (void)ctrl_type;
+    s_running = false;
+    ESP_LOGI(TAG, "Shutdown signal received (Windows console)");
+    return TRUE;
+}
+#endif
 
 static void sig_handler(int sig)
 {
@@ -59,13 +90,13 @@ static int mkdir_p(const char *path)
     char tmp[512];
     snprintf(tmp, sizeof(tmp), "%s", path);
     for (char *p = tmp + 1; *p; p++) {
-        if (*p == '/') {
+        if (*p == '/' || *p == '\\') {
             *p = '\0';
-            mkdir(tmp, 0755);
-            *p = '/';
+            safe_mkdir(tmp, 0755);
+            *p = '/';  /* normalize to forward slash for consistency */
         }
     }
-    return mkdir(tmp, 0755);
+    return safe_mkdir(tmp, 0755);
 }
 
 /*
@@ -101,18 +132,48 @@ static void write_default_json(const char *path, const char *content)
 
 /*
  * Recursively copy a directory tree from src/ to dst/.
- * Skips files that already exist in dst using cp -rn.
+ * Skips files that already exist in dst.
  */
 static void copy_tree(const char *src, const char *dst)
 {
-    pid_t pid = fork();
-    if (pid == 0) {
-        execlp("cp", "cp", "-rn", "--", src, dst, (char *)NULL);
-        _exit(1);
-    } else if (pid > 0) {
-        int status;
-        waitpid(pid, &status, 0);
+    mkdir_p(dst);
+
+    DIR *d = opendir(src);
+    if (!d) return;
+
+    struct dirent *ent;
+    char src_path[PATH_MAX];
+    char dst_path[PATH_MAX];
+
+    while ((ent = readdir(d)) != NULL) {
+        if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0)
+            continue;
+
+        snprintf(src_path, sizeof(src_path), "%s/%s", src, ent->d_name);
+        snprintf(dst_path, sizeof(dst_path), "%s/%s", dst, ent->d_name);
+
+        /* Check if it's a directory */
+        struct stat st;
+        if (stat(src_path, &st) == 0 && S_ISDIR(st.st_mode)) {
+            copy_tree(src_path, dst_path);
+        } else {
+            /* Copy file (skip if already exists) */
+            if (access(dst_path, F_OK) == 0) continue;
+            FILE *fs = fopen(src_path, "rb");
+            if (fs) {
+                FILE *fd = fopen(dst_path, "wb");
+                if (fd) {
+                    char buf[8192];
+                    size_t n;
+                    while ((n = fread(buf, 1, sizeof(buf), fs)) > 0)
+                        fwrite(buf, 1, n, fd);
+                    fclose(fd);
+                }
+                fclose(fs);
+            }
+        }
     }
+    closedir(d);
 }
 
 /*
@@ -312,13 +373,40 @@ static void write_pid_file(void)
     if (!g_pid_file_path[0]) return;
     FILE *fp = fopen(g_pid_file_path, "w");
     if (fp) {
+#if defined(PLATFORM_WINDOWS)
+        fprintf(fp, "%lu\n", GetCurrentProcessId());
+#else
         fprintf(fp, "%d\n", getpid());
+#endif
         fclose(fp);
     }
 }
 
 static void daemonize(const char *log_path)
 {
+#if defined(PLATFORM_WINDOWS)
+    /* Windows: detach from console without forking.
+       FreeConsole() detaches from the calling console.  The process
+       continues running in the background. */
+    write_pid_file();
+
+    if (!FreeConsole()) {
+        ESP_LOGW(TAG, "FreeConsole failed (may already be detached): %lu", GetLastError());
+    }
+
+    /* Redirect standard streams to NUL */
+    int null_fd = open(NULL_DEVICE, O_RDWR);
+    if (null_fd >= 0) {
+        dup2(null_fd, STDIN_FILENO);
+        dup2(null_fd, STDOUT_FILENO);
+        dup2(null_fd, STDERR_FILENO);
+        close(null_fd);
+    }
+
+    esp_log_set_log_file(log_path);
+#else
+    /* POSIX: double-fork daemonization */
+
     /* First fork — detach from terminal */
     pid_t pid = fork();
     if (pid < 0) { perror("fork"); exit(1); }
@@ -341,7 +429,7 @@ static void daemonize(const char *log_path)
 
     /* Redirect all standard streams to /dev/null.
        Log output goes via esp_log_set_log_file which was called before daemonize. */
-    int null_fd = open("/dev/null", O_RDWR);
+    int null_fd = open(NULL_DEVICE, O_RDWR);
     if (null_fd >= 0) {
         dup2(null_fd, STDIN_FILENO);
         dup2(null_fd, STDOUT_FILENO);
@@ -351,6 +439,7 @@ static void daemonize(const char *log_path)
 
     /* Set log file for ESP_LOGX dual output */
     esp_log_set_log_file(log_path);
+#endif
 }
 
 static void print_usage(const char *prog)
@@ -370,9 +459,15 @@ static void print_usage(const char *prog)
 
 int main(int argc, char **argv)
 {
+#if defined(PLATFORM_WINDOWS)
+    SetConsoleCtrlHandler(win_ctrl_handler, TRUE);
+    signal(SIGINT, sig_handler);
+    signal(SIGTERM, sig_handler);
+#else
     signal(SIGINT, sig_handler);
     signal(SIGTERM, sig_handler);
     signal(SIGHUP,  sig_handler);
+#endif
 
     /* ---- parse CLI arguments ---- */
     const char *data_dir_override = NULL;
@@ -423,13 +518,28 @@ int main(int argc, char **argv)
     if (data_dir_override) {
         snprintf(data_dir, sizeof(data_dir), "%s", data_dir_override);
     } else {
-        const char *home = getenv("HOME");
-        if (!home) home = "/tmp";
+        const char *home = NULL;
+#if defined(PLATFORM_WINDOWS)
+        home = getenv("USERPROFILE");
+        if (!home) home = getenv("HOMEDRIVE");
+#else
+        home = getenv("HOME");
+#endif
+        if (!home) home = ".";
         snprintf(data_dir, sizeof(data_dir), "%s/.esp-agent", home);
     }
 
     /* Build sub-paths */
     char abs_data_dir[PATH_MAX];
+#if defined(PLATFORM_WINDOWS)
+    if (!_fullpath(abs_data_dir, data_dir, sizeof(abs_data_dir))) {
+        mkdir_p(data_dir);
+        if (!_fullpath(abs_data_dir, data_dir, sizeof(abs_data_dir))) {
+            ESP_LOGE(TAG, "Failed to resolve data directory: %s", data_dir);
+            return 1;
+        }
+    }
+#else
     if (!realpath(data_dir, abs_data_dir)) {
         mkdir_p(data_dir);
         if (!realpath(data_dir, abs_data_dir)) {
@@ -437,6 +547,9 @@ int main(int argc, char **argv)
             return 1;
         }
     }
+#endif
+    /* Save for daemon re-launch */
+    snprintf(g_abs_data_dir, sizeof(g_abs_data_dir), "%s", abs_data_dir);
 
     /* Resolve log file path early (needed for daemon and esp_log_set_log_file) */
     char log_path[PATH_MAX];
@@ -674,7 +787,15 @@ int main(int argc, char **argv)
     ESP_LOGI(TAG, "Log file: %s", log_path);
 
     /* Pass data dir to console_unix for socket path */
+#if defined(PLATFORM_WINDOWS)
+    {
+        char env_buf[PATH_MAX + 32];
+        snprintf(env_buf, sizeof(env_buf), "ESP_AGENT_DATA_DIR=%s", abs_data_dir);
+        _putenv(env_buf);
+    }
+#else
     setenv("ESP_AGENT_DATA_DIR", abs_data_dir, 1);
+#endif
     ESP_LOGI(TAG, "Display: %s", display_enabled ? "enabled" : "disabled");
     ESP_LOGI(TAG, "LLM config: profile=%s model=%s base_url=%s",
              config.llm_profile,
@@ -794,9 +915,9 @@ int main(int argc, char **argv)
     {
         char sock_path[PATH_MAX];
         snprintf(sock_path, sizeof(sock_path), "%s/agent.sock", abs_data_dir);
-        unlink(sock_path);
+        safe_unlink(sock_path);
     }
-    if (g_pid_file_path[0]) unlink(g_pid_file_path);
+    if (g_pid_file_path[0]) safe_unlink(g_pid_file_path);
 
     ESP_LOGI(TAG, "Shutting down...");
     return 0;

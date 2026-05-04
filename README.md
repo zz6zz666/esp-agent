@@ -1,25 +1,28 @@
 # esp-agent —— 基于esp-claw的超轻量级沙盒claw（esp-claw Simulator）
 
-在 Linux 桌面端完整运行 [esp-claw](https://github.com/espressif/esp-claw) 嵌入式 AI Agent 框架，无需 ESP32 硬件。通过一套 POSIX 兼容层（FreeRTOS→pthread、ESP-IDF→stub），将 esp-claw 的核心代码直接在桌面 Linux 上编译运行，提供模拟 LCD 屏和 lua 脚本执行能力。
+跨平台（Linux + Windows）桌面环境完整运行 [esp-claw](https://github.com/espressif/esp-claw) 嵌入式 AI Agent 框架，无需 ESP32 硬件。通过平台兼容层（FreeRTOS→pthread/Win32 threads、ESP-IDF→stub），将 esp-claw 的核心代码直接在桌面端编译运行，提供模拟 LCD 屏和 lua 脚本执行能力。
 
 ## 特性
 
 - **零硬件依赖** — 不需要 ESP32 开发板、不需要 JTAG 调试器，纯软件模拟
-- **即装即用** — 提供预构建 `.deb` 包，一键安装，自动解决依赖
+- **跨平台** — 同时支持 Linux (x86_64) 和 Windows (MinGW-w64 / MSYS2)
+- **即装即用** — Linux 提供预构建 `.deb` 包一键安装；Windows 提供 `.zip` 绿色包
 - **DeepSeek 兼容** — 内置 OpenAI 兼容后端，支持 DeepSeek、OpenAI、Ollama 等
 - **直接命令转发** — 管理命令之外的所有命令（`ask`、`cap`、`lua`、`skill` 等）直接转发到 Agent 内部 CLI，无需进入子 REPL
 - **屏幕模拟** — 通过 SDL2 窗口模拟 ESP32 LCD 显示屏，可配置关闭
-- **systemd 用户服务** — 支持登录自动启动
+- **systemd 用户服务** — Linux 支持登录自动启动
 - **独立设计** — 模拟器代码完全与上游 `esp-claw/` 分离，互不污染
 
 ## 系统要求
 
-- **操作系统**: Linux（Ubuntu 22.04+ / Debian 12+ 或其他 systemd 发行版）
-- **架构**: x86_64 (amd64)
+- **Linux**: Ubuntu 22.04+ / Debian 12+ 或其他 systemd 发行版，x86_64 (amd64)
+- **Windows**: Windows 10+，MSYS2 MinGW-w64 环境（编译）或直接运行发布包
 
 ## 快速开始
 
-### 方式一：预构建包安装（推荐）
+### Linux
+
+#### 方式一：预构建包安装（推荐）
 
 ```bash
 # 1. 安装 .deb 包
@@ -35,7 +38,7 @@ esp-agent start
 esp-agent ask "你好"
 ```
 
-### 方式二：从源码构建
+#### 方式二：从源码构建
 
 ```bash
 # 1. 安装编译依赖
@@ -53,6 +56,41 @@ git submodule update --init
 ./esp-agent config
 ./esp-agent start
 ./esp-agent ask "你好"
+```
+
+### Windows
+
+#### 方式一：发布包（推荐）
+
+```cmd
+REM 1. 解压 esp-agent-windows-v1.0.0.zip
+REM 2. 将 DejaVuSans.ttf 和 NotoColorEmoji.ttf 放入 fonts\ 目录
+REM 3. 配置并启动
+esp-agent.exe config
+esp-agent.exe start
+esp-agent.exe ask "你好"
+```
+
+#### 方式二：从源码构建（MSYS2 MinGW-w64）
+
+```bash
+# 1. 安装 MSYS2 (https://www.msys2.org/)，在 MINGW64 终端安装依赖
+pacman -S mingw-w64-x86_64-cmake mingw-w64-x86_64-make \
+  mingw-w64-x86_64-curl mingw-w64-x86_64-lua \
+  mingw-w64-x86_64-SDL2 mingw-w64-x86_64-json-c \
+  mingw-w64-x86_64-gcc
+
+# 2. 克隆仓库
+git clone <repo-url> esp-agent && cd esp-agent
+git submodule update --init
+
+# 3. 编译
+esp-agent.exe build
+
+# 4. 配置并启动
+esp-agent.exe config
+esp-agent.exe start
+esp-agent.exe ask "你好"
 ```
 
 ## 配置 LLM
@@ -75,7 +113,7 @@ LLM_API_KEY=sk-xxx LLM_MODEL=gpt-4o LLM_PROFILE=openai esp-agent start
 
 ### 方式三：直接编辑配置文件
 
-`~/.esp-agent/config.json`:
+`config.json` (位于数据目录下):
 
 ```json
 {
@@ -183,7 +221,7 @@ LLM_API_KEY=sk-xxx LLM_MODEL=gpt-4o LLM_PROFILE=openai esp-agent start
 ### Agent 命令（直接转发）
 
 除上述管理命令以外，所有以 `esp-agent` 开头的命令都会直接转发给 Agent 内部 CLI
-处理（通过 Unix Socket 单次请求-响应）。无需进入子 REPL。
+处理（Linux 通过 Unix Socket，Windows 通过 Named Pipe，单次请求-响应）。无需进入子 REPL。
 
 查看 Agent 内部帮助：
 
@@ -228,12 +266,12 @@ esp-agent service status
 
 ## 数据目录
 
-所有运行时数据存储在 `~/.esp-agent/`：
+所有运行时数据存储在 `~/.esp-agent/`（Linux）或 `%USERPROFILE%\.esp-agent\`（Windows）：
 
 ```
-~/.esp-agent/
+.esp-agent/
 ├── config.json              # Agent 配置
-├── agent.sock               # CLI 连接用的 Unix Socket
+├── agent.sock               # IPC 通道（Unix Socket / Named Pipe）
 ├── agent.pid                # 进程 PID 文件
 ├── skills/                  # 技能注册表 + 技能文档 (.md)
 ├── scripts/builtin/         # Lua 脚本（自动加载）
@@ -254,31 +292,36 @@ esp-agent/
 │   ├── include/         # ESP-IDF / FreeRTOS 头文件桩
 │   │   ├── esp/         #   esp_err, esp_log, esp_console, ...
 │   │   ├── freertos/    #   FreeRTOS.h, task.h, queue.h, ...
+│   │   ├── platform/    #   平台抽象层 (platform.h, platform_posix.h, platform_win32.h)
 │   │   └── argtable3/   #   argtable3 最小桩
-│   ├── freertos_shim.c  # FreeRTOS → pthread 实现
-│   ├── console_unix.c   # esp_console → Unix Socket REPL
+│   ├── freertos_shim.c  # FreeRTOS → pthread / Win32 threads 实现
+│   ├── console_unix.c   # esp_console → Unix Socket / Named Pipe REPL
 │   ├── http_curl.c      # LLM HTTP 传输 (libcurl)
 │   ├── display_sdl2.c   # 显示屏模拟 (SDL2)
 │   ├── nvs.c            # NVS 存储模拟 (cJSON)
-│   └── cJSON.c          # JSON 解析库
+│   ├── cJSON.c          # JSON 解析库
+│   └── platform_utils.c # 跨平台工具函数
+├── cli/                 # CLI 管理工具
+│   └── esp_agent_cli.c  # 跨平台 CLI (config/start/stop/status 等)
 ├── main_desktop.c       # 桌面程序入口
 ├── CMakeLists.txt       # CMake 构建系统
-├── esp-agent            # CLI 管理脚本
+├── _run_desktop.sh      # Linux 启动脚本
+├── _run_desktop.bat     # Windows 启动脚本
 ├── package.sh           # .deb 打包脚本
-├── packaging/           # Debian 包结构
+├── package.bat          # Windows ZIP 打包脚本
 └── README.md
 ```
 
-### FreeRTOS → POSIX 映射
+### FreeRTOS → 平台映射
 
-| FreeRTOS API                        | Linux 等效实现                                       |
-| ----------------------------------- | ---------------------------------------------------- |
-| `xTaskCreate`                     | `pthread_create`                                   |
-| `vTaskDelete`                     | `pthread_cancel` + `pthread_join`                |
-| `vTaskDelay`                      | `usleep`                                           |
-| `xQueueCreate/Send/Receive`       | 环形缓冲区 +`pthread_mutex_t` + `pthread_cond_t` |
-| `xSemaphoreCreateMutex/Take/Give` | `pthread_mutex_t` + `pthread_cond_t`             |
-| `xTaskGetTickCount`               | `gettimeofday` → 毫秒                             |
+| FreeRTOS API                        | Linux 实现                            | Windows 实现                          |
+| ----------------------------------- | ------------------------------------- | ------------------------------------- |
+| `xTaskCreate`                     | `pthread_create`                    | `CreateThread`                      |
+| `vTaskDelete`                     | `pthread_cancel` + `pthread_join`   | `TerminateThread` + `WaitForSingleObject` |
+| `vTaskDelay`                      | `usleep`                            | `Sleep`                             |
+| `xQueueCreate/Send/Receive`       | 环形缓冲区 +`pthread_mutex_t` + `pthread_cond_t` | 环形缓冲区 + `CRITICAL_SECTION` + `CONDITION_VARIABLE` |
+| `xSemaphoreCreateMutex/Take/Give` | `pthread_mutex_t` + `pthread_cond_t` | `CRITICAL_SECTION` + `CONDITION_VARIABLE` |
+| `xTaskGetTickCount`               | `gettimeofday` → ms                 | `QueryPerformanceCounter` → ms       |
 
 ### 已启用的能力模块
 
@@ -359,11 +402,16 @@ esp-agent session my-new-session
 
 **Q: 如何卸载？**
 
+Linux:
 ```bash
-# 先停止所有运行中的实例
 esp-agent stop
-# 卸载
 sudo apt remove esp-agent
-# 可选：删除用户数据
 rm -rf ~/.esp-agent
+```
+
+Windows:
+```cmd
+esp-agent.exe stop
+REM 删除程序目录和数据目录
+rmdir /s %USERPROFILE%\.esp-agent
 ```

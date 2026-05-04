@@ -11,14 +11,24 @@
 static cJSON *s_nvs_json = NULL;
 static const char *s_nvs_path = NULL;
 
+static const char *get_home_dir(void)
+{
+#ifdef PLATFORM_WINDOWS
+    const char *home = getenv("USERPROFILE");
+    if (!home) home = getenv("HOMEDRIVE");
+#else
+    const char *home = getenv("HOME");
+#endif
+    if (!home) home = ".";
+    return home;
+}
+
 static void nvs_ensure_loaded(void)
 {
     if (s_nvs_json) return;
 
-    const char *home = getenv("HOME");
-    if (!home) home = "/tmp";
     char path[512];
-    snprintf(path, sizeof(path), "%s/.esp-claw-sim/nvs.json", home);
+    snprintf(path, sizeof(path), "%s/.esp-claw-sim/nvs.json", get_home_dir());
     s_nvs_path = strdup(path);
 
     FILE *fp = fopen(path, "r");

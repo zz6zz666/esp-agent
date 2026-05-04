@@ -2,14 +2,16 @@
 
 ## Project Overview
 
-Linux desktop test environment for the `esp-claw` embedded AI agent framework. Validate agent logic (LLM calls, tool routing, Lua scripting, event routing, memory, skills) without ESP32 hardware.
+Cross-platform (Linux + Windows) desktop test environment for the `esp-claw` embedded AI agent framework. Validate agent logic (LLM calls, tool routing, Lua scripting, event routing, memory, skills) without ESP32 hardware.
 
 - `esp-claw/` — upstream repo (read-only reference, do not modify)
 - `sim_hal/` — our independent simulator layer (ESP-IDF/FreeRTOS stubs for desktop)
-- `esp-agent` — CLI tool for managing the agent service
+- `cli/` — cross-platform CLI management tool (`esp-agent.exe` / `esp-agent`)
 - `report.md` — full architecture reference of the upstream codebase
 
 ## Quick Start
+
+### Linux
 
 ```bash
 # First time
@@ -23,6 +25,20 @@ Linux desktop test environment for the `esp-claw` embedded AI agent framework. V
 ./_run_desktop.sh run
 ```
 
+### Windows (MSYS2 MinGW-w64)
+
+```cmd
+REM First time
+esp-agent.exe config     REM Full setup wizard (LLM, channels, search, display)
+esp-agent.exe build      REM Compile the binary
+esp-agent.exe start      REM Start the agent (detached background process)
+esp-agent.exe ask "Hello"  REM Send a prompt to the agent
+esp-agent.exe stop       REM Shut down
+
+REM Or run in foreground for development:
+_run_desktop.bat run
+```
+
 ## CLI Tool (`./esp-agent`)
 
 ### Management commands (handled locally)
@@ -31,7 +47,7 @@ Linux desktop test environment for the `esp-claw` embedded AI agent framework. V
 | ----------- | ------------------------------------------------------------------ |
 | `config`  | Interactive first-time setup (LLM keys, display toggle)            |
 | `start`   | Start agent as background daemon (auto-tails logs)                 |
-| `stop`    | Graceful shutdown via SIGTERM                                      |
+| `stop`    | Graceful shutdown (SIGTERM on Linux, TerminateProcess on Windows)   |
 | `restart` | Stop then start the agent                                          |
 | `status`  | Check if agent is running (PID, socket, config)                    |
 | `logs`    | Tail the agent log file                                            |
@@ -45,7 +61,8 @@ Linux desktop test environment for the `esp-claw` embedded AI agent framework. V
 own `help` output.  `esp-agent esp-claw help` shows only the REPL help.
 
 Every command not in the management table above is forwarded directly to
-the agent's built-in CLI over the Unix socket (one-shot request/response).
+the agent's built-in CLI via IPC — Unix socket on Linux, Named Pipe on
+Windows (one-shot request/response).
 Examples:
 
 - `esp-agent ask "Hello"` — multi-turn prompt
@@ -55,12 +72,14 @@ Examples:
 - `esp-agent cap list` — list capabilities
 - `esp-agent hello` → REPL returns "Unknown command: hello"
 
-## Data Directory (`~/.esp-agent/`)
+## Data Directory
+
+Linux: `~/.esp-agent/` · Windows: `%USERPROFILE%\.esp-agent\`
 
 ```
-~/.esp-agent/
+.esp-agent/
 ├── config.json              # LLM, channels, search keys, display
-├── agent.sock               # Unix domain socket for CLI connect
+├── agent.sock               # Unix domain socket (Linux) / Named Pipe (Windows)
 ├── agent.pid                # Process ID (running)
 ├── skills/
 │   ├── skills_list.json     # Skill registry
@@ -245,7 +264,7 @@ sim_hal/
 | uxTaskGetSystemState               | /proc/self/task/…/stat + /proc/stat CPU idle   |
 | xEventGroup*                       | pthread_mutex_t + pthread_cond_t + uint32_t    |
 
-## Agent CLI Commands (forwarded over Unix socket)
+## Agent CLI Commands (forwarded over IPC)
 
 ```
 help                    List all registered commands
@@ -265,9 +284,18 @@ mcp_server --status|--enable|--disable|--set-config  (argtable3 parsed)
 
 ### Prerequisites
 
+**Linux (Debian/Ubuntu):**
 ```bash
 sudo apt install build-essential cmake pkg-config \
   libcurl4-openssl-dev liblua5.4-dev libsdl2-dev libjson-c-dev
+```
+
+**Windows (MSYS2 MinGW-w64):**
+```bash
+pacman -S mingw-w64-x86_64-cmake mingw-w64-x86_64-make \
+  mingw-w64-x86_64-curl mingw-w64-x86_64-lua \
+  mingw-w64-x86_64-SDL2 mingw-w64-x86_64-json-c \
+  mingw-w64-x86_64-gcc
 ```
 
 ### Dev build (Debug)
@@ -275,13 +303,15 @@ sudo apt install build-essential cmake pkg-config \
 ```bash
 mkdir -p build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Debug
-make -j$(nproc)
+make -j$(nproc)          # Linux
+# or: mingw32-make -j4   # Windows
 ```
 
 ### Release build
 
 ```bash
-./esp-agent build
+./esp-agent build           # Linux
+# or: esp-agent.exe build   # Windows
 ```
 
 ## CONFIG defines (CMakeLists.txt)
@@ -342,14 +372,14 @@ All 19 capability groups register (~72 capabilities), CLI REPL serves 14 command
 [I] [app_capabilities] Register session manager cap ok (groups=18, caps=72)
 [I] [cap_mcp_srv] MCP server ready: http://esp-claw.local:18791/mcp_server
 [I] [desktop_main] cap_cli registered with 8 allowed commands (group 19)
-[I] [console_unix] Unix socket ready at ~/.esp-agent/agent.sock
+[I] [console_unix] IPC ready at ~/.esp-agent/agent.sock (Unix socket / Named Pipe)
 ```
 
-Real host data passthrough (all via `/proc` and POSIX APIs):
-- **CPU**: model name from `/proc/cpuinfo`, core count from `sysconf`, usage from `/proc/stat`
-- **Memory**: total/free/available from `/proc/meminfo`
-- **Network**: IP/netmask/gateway from `getifaddrs()`, WiFi SSID/RSSI from `/proc/net/wireless`
-- **Uptime**: `clock_gettime(CLOCK_MONOTONIC)` (microseconds since boot)
+Real host data passthrough (platform-adapted):
+- **CPU**: model name from `/proc/cpuinfo` (Linux) / registry + `GetSystemInfo()` (Windows), core count from `sysconf` / `GetSystemInfo()`, usage from `/proc/stat` / `GetSystemTimes()`
+- **Memory**: total/free/available from `/proc/meminfo` / `GlobalMemoryStatusEx()`
+- **Network**: IP/netmask/gateway from `getifaddrs()` / `GetAdaptersAddresses()`, WiFi SSID/RSSI from `/proc/net/wireless` / `WlanQueryInterface()`
+- **Uptime**: `clock_gettime(CLOCK_MONOTONIC)` / `QueryPerformanceCounter()` (microseconds since boot)
 
 ### `cap call` JSON syntax
 
@@ -391,3 +421,9 @@ Note: wrap the full command in single quotes to prevent shell expansion of `{}` 
 - [ ] Skills auto-load into LLM context
 - [ ] Memory store/recall in LLM session
 - [ ] Display toggle (SDL2 window on/off via config.json)
+- [ ] Windows build (MSYS2 MinGW-w64)
+- [ ] Windows Named Pipe IPC
+- [ ] Windows daemon (detached process)
+- [ ] Windows font loading from exe_dir/fonts/
+- [ ] Windows real host data (GetSystemInfo, GlobalMemoryStatusEx, GetAdaptersAddresses)
+- [ ] esp-agent.exe CLI tool (config/start/stop/status/logs/build/clean)

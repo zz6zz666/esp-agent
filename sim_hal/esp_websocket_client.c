@@ -10,25 +10,68 @@
 #include "esp/esp_websocket_client.h"
 #include "esp/esp_log.h"
 
-#include <arpa/inet.h>
-#include <errno.h>
-#include <fcntl.h>
-#include <netdb.h>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
+#if defined(PLATFORM_WINDOWS)
+# define WIN32_LEAN_AND_MEAN
+# include <windows.h>
+# include <winsock2.h>
+# include <ws2tcpip.h>
+# include <bcrypt.h>
+# include <io.h>
+# pragma comment(lib, "ws2_32.lib")
+# pragma comment(lib, "bcrypt.lib")
+#else
+# include <arpa/inet.h>
+# include <errno.h>
+# include <fcntl.h>
+# include <netdb.h>
+# include <netinet/in.h>
+# include <netinet/tcp.h>
+# include <sys/select.h>
+# include <sys/socket.h>
+# include <sys/time.h>
+# include <sys/types.h>
+#endif
+
 #include <openssl/err.h>
 #include <openssl/ssl.h>
 #include <pthread.h>
-#include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/select.h>
-#include <sys/socket.h>
-#include <sys/time.h>
-#include <sys/types.h>
 #include <unistd.h>
+
+#if defined(PLATFORM_WINDOWS)
+#ifndef strndup
+static inline char *strndup(const char *s, size_t n)
+{
+    size_t len = strnlen(s, n);
+    char *d = malloc(len + 1);
+    if (d) {
+        memcpy(d, s, len);
+        d[len] = '\0';
+    }
+    return d;
+}
+#endif
+#endif
+
+/* Platform socket type and helpers */
+#if defined(PLATFORM_WINDOWS)
+typedef SOCKET ws_socket_t;
+# define WS_INVALID_SOCKET   INVALID_SOCKET
+# define WS_CLOSE_SOCKET(s)  closesocket(s)
+# define WS_LAST_ERROR()     WSAGetLastError()
+# define WS_EINPROGRESS      WSAEWOULDBLOCK
+# define WS_SEND_FLAGS       0
+#else
+typedef int ws_socket_t;
+# define WS_INVALID_SOCKET   (-1)
+# define WS_CLOSE_SOCKET(s)  close(s)
+# define WS_LAST_ERROR()     errno
+# define WS_EINPROGRESS      EINPROGRESS
+# define WS_SEND_FLAGS       MSG_NOSIGNAL
+#endif
 
 static const char *TAG = "ws_client";
 
@@ -57,7 +100,7 @@ typedef struct {
     /* connection state */
     volatile bool  running;        /* set by start, cleared by stop */
     volatile bool  connected;
-    int            sock_fd;
+    ws_socket_t    sock_fd;
     SSL           *ssl;
     SSL_CTX       *ssl_ctx;
     pthread_t      recv_thread;
@@ -151,7 +194,7 @@ static bool ws_parse_url(ws_ctx_t *ctx)
     return ctx->host && ctx->path;
 }
 
-static int ws_tcp_connect(ws_ctx_t *ctx)
+static ws_socket_t ws_tcp_connect(ws_ctx_t *ctx)
 {
     struct addrinfo hints = {0}, *res;
     char port_str[16];
@@ -162,55 +205,88 @@ static int ws_tcp_connect(ws_ctx_t *ctx)
     snprintf(port_str, sizeof(port_str), "%d", ctx->port);
     int rc = getaddrinfo(ctx->host, port_str, &hints, &res);
     if (rc != 0) {
-        ESP_LOGE(TAG, "getaddrinfo(%s:%d): %s", ctx->host, ctx->port, gai_strerror(rc));
-        return -1;
+        ESP_LOGE(TAG, "getaddrinfo(%s:%d): %s", ctx->host, ctx->port,
+#if defined(PLATFORM_WINDOWS)
+                 gai_strerrorA(rc));
+#else
+                 gai_strerror(rc));
+#endif
+        return WS_INVALID_SOCKET;
     }
 
-    int fd = -1;
+    ws_socket_t fd = WS_INVALID_SOCKET;
     for (struct addrinfo *rp = res; rp; rp = rp->ai_next) {
         fd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
-        if (fd < 0) continue;
+        if (fd == WS_INVALID_SOCKET) continue;
 
         /* set non-blocking for connect timeout */
+#if defined(PLATFORM_WINDOWS)
+        unsigned long nonblock = 1;
+        ioctlsocket(fd, FIONBIO, &nonblock);
+#else
         long flags = fcntl(fd, F_GETFL, 0);
         fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+#endif
 
-        rc = connect(fd, rp->ai_addr, rp->ai_addrlen);
-        if (rc < 0 && errno != EINPROGRESS) {
-            close(fd); fd = -1; continue;
+        rc = connect(fd, rp->ai_addr, (int)rp->ai_addrlen);
+        if (rc < 0 && WS_LAST_ERROR() != WS_EINPROGRESS) {
+            WS_CLOSE_SOCKET(fd); fd = WS_INVALID_SOCKET; continue;
         }
 
         if (rc == 0) {
-            /* immediate connect */
-            fcntl(fd, F_SETFL, flags); /* restore blocking */
+            /* immediate connect — restore blocking */
+#if defined(PLATFORM_WINDOWS)
+            nonblock = 0;
+            ioctlsocket(fd, FIONBIO, &nonblock);
+#else
+            fcntl(fd, F_SETFL, flags);
+#endif
             break;
         }
 
         /* wait for connect */
         fd_set wfds;
         struct timeval tv = {
-            .tv_sec  = ctx->network_timeout_ms / 1000,
-            .tv_usec = (ctx->network_timeout_ms % 1000) * 1000,
+            .tv_sec  = (long)((unsigned)ctx->network_timeout_ms / 1000),
+            .tv_usec = (long)((unsigned)(ctx->network_timeout_ms % 1000) * 1000),
         };
         FD_ZERO(&wfds);
         FD_SET(fd, &wfds);
-        rc = select(fd + 1, NULL, &wfds, NULL, &tv);
-        if (rc <= 0) { close(fd); fd = -1; continue; }
+        rc = select((int)(fd + 1), NULL, &wfds, NULL, &tv);
+        if (rc <= 0) { WS_CLOSE_SOCKET(fd); fd = WS_INVALID_SOCKET; continue; }
 
         int err = 0;
         socklen_t len = sizeof(err);
-        getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len);
-        if (err != 0) { close(fd); fd = -1; continue; }
+        getsockopt(fd, SOL_SOCKET, SO_ERROR,
+#if defined(PLATFORM_WINDOWS)
+                   (char *)&err,
+#else
+                   &err,
+#endif
+                   &len);
+        if (err != 0) { WS_CLOSE_SOCKET(fd); fd = WS_INVALID_SOCKET; continue; }
 
-        fcntl(fd, F_SETFL, flags); /* restore blocking */
+        /* restore blocking */
+#if defined(PLATFORM_WINDOWS)
+        nonblock = 0;
+        ioctlsocket(fd, FIONBIO, &nonblock);
+#else
+        fcntl(fd, F_SETFL, flags);
+#endif
         break;
     }
 
     freeaddrinfo(res);
 
-    if (fd >= 0) {
+    if (fd != WS_INVALID_SOCKET) {
         int one = 1;
-        setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+        setsockopt(fd, IPPROTO_TCP, TCP_NODELAY,
+#if defined(PLATFORM_WINDOWS)
+                   (const char *)&one,
+#else
+                   &one,
+#endif
+                   sizeof(one));
     }
 
     return fd;
@@ -225,7 +301,7 @@ static bool ws_tls_connect(ws_ctx_t *ctx)
     ctx->ssl = SSL_new(ctx->ssl_ctx);
     if (!ctx->ssl) return false;
 
-    SSL_set_fd(ctx->ssl, ctx->sock_fd);
+    SSL_set_fd(ctx->ssl, (int)(intptr_t)ctx->sock_fd);
     SSL_set_tlsext_host_name(ctx->ssl, ctx->host);
 
     int rc = SSL_connect(ctx->ssl);
@@ -237,7 +313,13 @@ static int ws_send_raw(ws_ctx_t *ctx, const void *buf, size_t len)
     if (ctx->use_tls) {
         return SSL_write(ctx->ssl, buf, (int)len);
     }
-    return (int)send(ctx->sock_fd, buf, len, MSG_NOSIGNAL);
+    return (int)send(ctx->sock_fd, buf,
+#if defined(PLATFORM_WINDOWS)
+                     (int)len,
+#else
+                     len,
+#endif
+                     WS_SEND_FLAGS);
 }
 
 static int ws_recv_raw(ws_ctx_t *ctx, void *buf, size_t len)
@@ -245,7 +327,13 @@ static int ws_recv_raw(ws_ctx_t *ctx, void *buf, size_t len)
     if (ctx->use_tls) {
         return SSL_read(ctx->ssl, buf, (int)len);
     }
-    return (int)recv(ctx->sock_fd, buf, len, 0);
+    return (int)recv(ctx->sock_fd, buf,
+#ifdef PLATFORM_WINDOWS
+                     (int)len,
+#else
+                     len,
+#endif
+                     0);
 }
 
 /* ---- WebSocket handshake ---- */
@@ -257,11 +345,15 @@ static bool ws_handshake(ws_ctx_t *ctx)
     unsigned char key_bytes[16];
 
     /* generate random key */
+#ifdef PLATFORM_WINDOWS
+    BCryptGenRandom(NULL, key_bytes, sizeof(key_bytes), BCRYPT_USE_SYSTEM_PREFERRED_RNG);
+#else
     FILE *urand = fopen("/dev/urandom", "r");
     if (urand) { fread(key_bytes, 1, 16, urand); fclose(urand); }
     else {
         for (int i = 0; i < 16; i++) key_bytes[i] = (unsigned char)(rand() & 0xFF);
     }
+#endif
 
     /* simple base64 (no padding for WS key) */
     static const char b64[] =
@@ -412,7 +504,7 @@ static int ws_send_frame(ws_ctx_t *ctx, int opcode,
 static bool ws_connect(ws_ctx_t *ctx)
 {
     ctx->sock_fd = ws_tcp_connect(ctx);
-    if (ctx->sock_fd < 0) {
+    if (ctx->sock_fd == WS_INVALID_SOCKET) {
         ESP_LOGW(TAG, "TCP connect failed to %s:%d", ctx->host, ctx->port);
         return false;
     }
@@ -420,8 +512,8 @@ static bool ws_connect(ws_ctx_t *ctx)
     if (ctx->use_tls) {
         if (!ws_tls_connect(ctx)) {
             ESP_LOGW(TAG, "TLS connect failed");
-            close(ctx->sock_fd);
-            ctx->sock_fd = -1;
+            WS_CLOSE_SOCKET(ctx->sock_fd);
+            ctx->sock_fd = WS_INVALID_SOCKET;
             return false;
         }
     }
@@ -430,13 +522,13 @@ static bool ws_connect(ws_ctx_t *ctx)
         ESP_LOGW(TAG, "WebSocket handshake failed");
         if (ctx->use_tls && ctx->ssl)      { SSL_shutdown(ctx->ssl); SSL_free(ctx->ssl); ctx->ssl = NULL; }
         if (ctx->ssl_ctx)                  { SSL_CTX_free(ctx->ssl_ctx); ctx->ssl_ctx = NULL; }
-        close(ctx->sock_fd);
-        ctx->sock_fd = -1;
+        WS_CLOSE_SOCKET(ctx->sock_fd);
+        ctx->sock_fd = WS_INVALID_SOCKET;
         return false;
     }
 
     ctx->connected = true;
-    ESP_LOGI(TAG, "WebSocket connected to %s (fd=%d)", ctx->uri, ctx->sock_fd);
+    ESP_LOGI(TAG, "WebSocket connected to %s (fd=%d)", ctx->uri, (int)(intptr_t)ctx->sock_fd);
     ws_fire_event(ctx, WEBSOCKET_EVENT_CONNECTED, 0, NULL, 0, 0, 0);
     return true;
 }
@@ -446,7 +538,7 @@ static void ws_disconnect(ws_ctx_t *ctx)
     ctx->connected = false;
     if (ctx->ssl)      { SSL_shutdown(ctx->ssl); SSL_free(ctx->ssl); ctx->ssl = NULL; }
     if (ctx->ssl_ctx)  { SSL_CTX_free(ctx->ssl_ctx); ctx->ssl_ctx = NULL; }
-    if (ctx->sock_fd >= 0) { close(ctx->sock_fd); ctx->sock_fd = -1; }
+    if (ctx->sock_fd != WS_INVALID_SOCKET) { WS_CLOSE_SOCKET(ctx->sock_fd); ctx->sock_fd = WS_INVALID_SOCKET; }
     ws_fire_event(ctx, WEBSOCKET_EVENT_DISCONNECTED, 0, NULL, 0, 0, 0);
 }
 
@@ -525,7 +617,7 @@ esp_websocket_client_handle_t esp_websocket_client_init(
     ctx->reconnect_timeout_ms   = config->reconnect_timeout_ms > 0 ? config->reconnect_timeout_ms : 5000;
     ctx->network_timeout_ms     = config->network_timeout_ms > 0 ? config->network_timeout_ms : 10000;
     ctx->disable_auto_reconnect = config->disable_auto_reconnect;
-    ctx->sock_fd                = -1;
+    ctx->sock_fd                = WS_INVALID_SOCKET;
 
     pthread_mutex_init(&ctx->mutex, NULL);
     pthread_mutex_init(&ctx->write_mutex, NULL);

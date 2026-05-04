@@ -1,14 +1,15 @@
 /*
  * ESP-IDF esp_chip_info.h stub for desktop simulator
  *
- * Reads real CPU info from /proc/cpuinfo and sysconf().
+ * Reads real CPU info.
+ * On Windows: GetSystemInfo + registry
+ * On POSIX:   /proc/cpuinfo + sysconf()
  */
 #pragma once
 #include "esp_err.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
-#include <unistd.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -23,6 +24,54 @@ typedef struct {
 /* Global — filled on first call to esp_chip_info() */
 static char _chip_model_name[64] = {0};
 static long _chip_cores = 0;
+
+#if defined(PLATFORM_WINDOWS)
+# define WIN32_LEAN_AND_MEAN
+# include <windows.h>
+
+static inline void _chip_init_once(void)
+{
+    if (_chip_cores > 0) return;
+
+    SYSTEM_INFO si;
+    GetSystemInfo(&si);
+    _chip_cores = si.dwNumberOfProcessors;
+    if (_chip_cores <= 0) _chip_cores = 8;
+
+    /* Read processor name from registry */
+    HKEY hKey;
+    if (RegOpenKeyExA(HKEY_LOCAL_MACHINE,
+            "HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0",
+            0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+        DWORD type, size = sizeof(_chip_model_name);
+        if (RegQueryValueExA(hKey, "ProcessorNameString",
+                NULL, &type, (BYTE *)_chip_model_name, &size) == ERROR_SUCCESS
+                && type == REG_SZ) {
+            /* Trim trailing spaces / newlines */
+            size_t len = strlen(_chip_model_name);
+            while (len > 0 && (_chip_model_name[len-1] == ' '
+                            || _chip_model_name[len-1] == '\n'
+                            || _chip_model_name[len-1] == '\r'))
+                _chip_model_name[--len] = '\0';
+        }
+        RegCloseKey(hKey);
+    }
+    if (!_chip_model_name[0]) {
+        /* Fallback based on architecture */
+        const char *arch;
+        switch (si.wProcessorArchitecture) {
+        case PROCESSOR_ARCHITECTURE_AMD64: arch = "x86_64"; break;
+        case PROCESSOR_ARCHITECTURE_INTEL: arch = "x86";    break;
+        case PROCESSOR_ARCHITECTURE_ARM64: arch = "ARM64";  break;
+        case PROCESSOR_ARCHITECTURE_ARM:   arch = "ARM";    break;
+        default:                           arch = "Unknown"; break;
+        }
+        snprintf(_chip_model_name, sizeof(_chip_model_name),
+                 "%s (%lu cores)", arch, (unsigned long)_chip_cores);
+    }
+}
+#else
+# include <unistd.h>
 
 static inline void _chip_init_once(void)
 {
@@ -55,6 +104,7 @@ static inline void _chip_init_once(void)
     if (!_chip_model_name[0])
         snprintf(_chip_model_name, sizeof(_chip_model_name), "Unknown x86_64");
 }
+#endif
 
 static inline void esp_chip_info(esp_chip_info_t *info) {
     _chip_init_once();

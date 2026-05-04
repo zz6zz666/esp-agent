@@ -1,17 +1,29 @@
 /*
  * ESP-IDF esp_netif.h stub for desktop simulator
  *
- * Always reports a connected STA netif with the host's primary IP address.
+ * Reports the host's primary IP address.
+ * On Windows: GetAdaptersAddresses (iphlpapi)
+ * On POSIX:   getifaddrs()
  */
 #pragma once
 #include "esp_err.h"
-#include <arpa/inet.h>
-#include <ifaddrs.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
-#include <sys/socket.h>
-#include <net/if.h>
+
+#if defined(PLATFORM_WINDOWS)
+# define WIN32_LEAN_AND_MEAN
+# include <windows.h>
+# include <winsock2.h>
+# include <ws2tcpip.h>
+# include <iphlpapi.h>
+# pragma comment(lib, "iphlpapi.lib")
+#else
+# include <arpa/inet.h>
+# include <ifaddrs.h>
+# include <sys/socket.h>
+# include <net/if.h>
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -73,6 +85,63 @@ static inline esp_netif_t esp_netif_get_handle_from_ifkey(const char *if_key) {
     return (esp_netif_t)(uintptr_t)1;
 }
 
+#if defined(PLATFORM_WINDOWS)
+static inline esp_err_t esp_netif_get_ip_info(esp_netif_t netif, esp_netif_ip_info_t *ip_info) {
+    (void)netif;
+    if (!ip_info) return ESP_ERR_INVALID_ARG;
+
+    memset(ip_info, 0, sizeof(*ip_info));
+    uint32_t found_ip = 0, found_mask = 0;
+
+    ULONG bufSize = 15000;
+    PIP_ADAPTER_ADDRESSES adapters = (PIP_ADAPTER_ADDRESSES)malloc(bufSize);
+    if (!adapters) goto fallback;
+
+    ULONG ret = GetAdaptersAddresses(AF_INET,
+            GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER,
+            NULL, adapters, &bufSize);
+    if (ret == ERROR_BUFFER_OVERFLOW) {
+        free(adapters);
+        adapters = (PIP_ADAPTER_ADDRESSES)malloc(bufSize);
+        if (!adapters) goto fallback;
+        ret = GetAdaptersAddresses(AF_INET,
+                GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER,
+                NULL, adapters, &bufSize);
+    }
+
+    if (ret == NO_ERROR) {
+        for (PIP_ADAPTER_ADDRESSES a = adapters; a; a = a->Next) {
+            /* Skip loopback and tunnel adapters */
+            if (a->IfType == IF_TYPE_SOFTWARE_LOOPBACK) continue;
+            if (a->OperStatus != IfOperStatusUp) continue;
+            for (PIP_ADAPTER_UNICAST_ADDRESS ua = a->FirstUnicastAddress; ua; ua = ua->Next) {
+                if (ua->Address.lpSockaddr->sa_family == AF_INET) {
+                    struct sockaddr_in *sin = (struct sockaddr_in *)ua->Address.lpSockaddr;
+                    found_ip = (uint32_t)sin->sin_addr.S_un.S_addr;
+                    /* Netmask from prefix length */
+                    uint8_t prefix = ua->OnLinkPrefixLength;
+                    found_mask = prefix ? (0xFFFFFFFF << (32 - prefix)) & 0xFFFFFFFF : 0x00FFFFFF;
+                    goto done;
+                }
+            }
+        }
+    }
+done:
+    if (adapters) free(adapters);
+
+    if (found_ip) {
+        ip_info->ip.addr = found_ip;
+        ip_info->netmask.addr = found_mask ? found_mask : 0x00ffffff;
+        ip_info->gw.addr = (found_ip & found_mask) | 0x01000000;
+    } else {
+fallback:
+        ip_info->ip.addr = 0x0100007f;
+        ip_info->netmask.addr = 0x00ffffff;
+        ip_info->gw.addr = 0x0100007f;
+    }
+    return ESP_OK;
+}
+#else
 static inline esp_err_t esp_netif_get_ip_info(esp_netif_t netif, esp_netif_ip_info_t *ip_info) {
     (void)netif;
     if (!ip_info) return ESP_ERR_INVALID_ARG;
@@ -84,12 +153,9 @@ static inline esp_err_t esp_netif_get_ip_info(esp_netif_t netif, esp_netif_ip_in
         for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
             if (!ifa->ifa_addr || ifa->ifa_addr->sa_family != AF_INET)
                 continue;
-            /* Skip loopback — pick the first real interface */
             if (ifa->ifa_flags & IFF_LOOPBACK)
                 continue;
             struct sockaddr_in *sin = (struct sockaddr_in *)ifa->ifa_addr;
-            /* s_addr on LE x86 already matches ESP32 convention (first octet in LSB).
-             * ntohl would reverse the bytes, so we use the raw s_addr value directly. */
             found_ip = sin->sin_addr.s_addr;
             if (ifa->ifa_netmask) {
                 struct sockaddr_in *nm = (struct sockaddr_in *)ifa->ifa_netmask;
@@ -104,16 +170,15 @@ static inline esp_err_t esp_netif_get_ip_info(esp_netif_t netif, esp_netif_ip_in
     if (found_ip) {
         ip_info->ip.addr = found_ip;
         ip_info->netmask.addr = found_mask ? found_mask : 0x00ffffff;
-        /* Gateway: common convention is .1 on the same subnet */
         ip_info->gw.addr = (found_ip & found_mask) | 0x01000000;
     } else {
-        /* Fallback: loopback */
         ip_info->ip.addr = 0x0100007f;
         ip_info->netmask.addr = 0x00ffffff;
         ip_info->gw.addr = 0x0100007f;
     }
     return ESP_OK;
 }
+#endif
 
 static inline esp_err_t esp_netif_get_ip6_linklocal(esp_netif_t netif, esp_netif_ip6_info_t *ip6_info) {
     (void)netif;

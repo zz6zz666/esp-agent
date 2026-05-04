@@ -42,7 +42,11 @@ static inline void _esp_log_write(const char *level, const char *tag, const char
     va_list args, copy;
 
     gettimeofday(&tv, NULL);
+#if defined(_WIN32)
+    localtime_s(&tm_info, (const time_t *)&tv.tv_sec);
+#else
     localtime_r(&tv.tv_sec, &tm_info);
+#endif
     strftime(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S", &tm_info);
 
     va_start(args, fmt);

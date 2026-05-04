@@ -8,9 +8,18 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <unistd.h>
+
+#if defined(PLATFORM_WINDOWS)
+# define WIN32_LEAN_AND_MEAN
+# include <windows.h>
+# include <direct.h>
+# define mkdir_mode(path, mode) _mkdir(path)
+#else
+# include <sys/stat.h>
+# include <sys/types.h>
+# include <unistd.h>
+# define mkdir_mode(path, mode) mkdir(path, mode)
+#endif
 
 #include "cJSON.h"
 
@@ -19,23 +28,31 @@
 
 static char nvs_path[512] = {0};
 
+static const char *get_home_dir(void)
+{
+#ifdef PLATFORM_WINDOWS
+    const char *home = getenv("USERPROFILE");
+    if (!home) home = getenv("HOMEDRIVE"); /* fallback */
+#else
+    const char *home = getenv("HOME");
+#endif
+    if (!home) home = ".";
+    return home;
+}
+
 static const char *get_nvs_path(void)
 {
     if (nvs_path[0] == '\0') {
-        const char *home = getenv("HOME");
-        if (!home) home = "/tmp";
-        snprintf(nvs_path, sizeof(nvs_path), "%s/%s/%s", home, NVS_DIR, NVS_FILE);
+        snprintf(nvs_path, sizeof(nvs_path), "%s/%s/%s", get_home_dir(), NVS_DIR, NVS_FILE);
     }
     return nvs_path;
 }
 
 static void ensure_nvs_dir(void)
 {
-    const char *home = getenv("HOME");
     char dir[512];
-    if (!home) home = "/tmp";
-    snprintf(dir, sizeof(dir), "%s/%s", home, NVS_DIR);
-    mkdir(dir, 0755);
+    snprintf(dir, sizeof(dir), "%s/%s", get_home_dir(), NVS_DIR);
+    mkdir_mode(dir, 0755);
 }
 
 esp_err_t nvs_flash_init(void)

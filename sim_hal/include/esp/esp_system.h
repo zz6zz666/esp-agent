@@ -1,7 +1,9 @@
 /*
  * ESP-IDF esp_system.h stub for desktop simulator
  *
- * Reads real host memory statistics from /proc/meminfo.
+ * Reads real host memory statistics.
+ * On Windows: GlobalMemoryStatusEx
+ * On POSIX:   /proc/meminfo
  */
 #pragma once
 
@@ -21,8 +23,29 @@ static inline void esp_restart(void)
     exit(0);
 }
 
+#if defined(PLATFORM_WINDOWS)
+# define WIN32_LEAN_AND_MEAN
+# include <windows.h>
+
+static inline size_t _meminfo_read(const char *key)
+{
+    MEMORYSTATUSEX mex;
+    mex.dwLength = sizeof(mex);
+    if (!GlobalMemoryStatusEx(&mex)) return 0;
+
+    if (strcmp(key, "MemTotal:") == 0)
+        return (size_t)mex.ullTotalPhys;
+    if (strcmp(key, "MemAvailable:") == 0)
+        return (size_t)mex.ullAvailPhys;
+    if (strcmp(key, "MemFree:") == 0)
+        return (size_t)(mex.ullAvailPhys > mex.ullTotalPhys / 10
+                        ? mex.ullAvailPhys - mex.ullTotalPhys / 10
+                        : mex.ullAvailPhys);
+    return 0;
+}
+#else
 /* Helper: read a /proc/meminfo key, return value in bytes (file reports kB) */
-static inline size_t proc_meminfo_read(const char *key)
+static inline size_t _meminfo_read(const char *key)
 {
     FILE *f = fopen("/proc/meminfo", "r");
     if (!f) return 0;
@@ -37,10 +60,11 @@ static inline size_t proc_meminfo_read(const char *key)
     fclose(f);
     return val_kb * 1024;
 }
+#endif
 
 static inline size_t esp_get_free_heap_size(void)
 {
-    return proc_meminfo_read("MemAvailable:");
+    return _meminfo_read("MemAvailable:");
 }
 
 static inline size_t esp_get_minimum_free_heap_size(void)

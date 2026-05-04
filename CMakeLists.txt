@@ -16,6 +16,7 @@ pkg_check_modules(JSONC   REQUIRED json-c)
 set(SIM_HAL_DIR  ${CMAKE_SOURCE_DIR}/sim_hal)
 set(SIM_INC_DIR  ${SIM_HAL_DIR}/include)
 set(SIM_SRCS
+    ${SIM_HAL_DIR}/platform_utils.c
     ${SIM_HAL_DIR}/esp_log.c
     ${SIM_HAL_DIR}/freertos_shim.c
     ${SIM_HAL_DIR}/nvs_stub.c
@@ -94,6 +95,16 @@ set(EMOTE_SRCS
 set(ESPCLAW_DIR ${CMAKE_SOURCE_DIR}/esp-claw)
 set(ESPCLAW_COMPONENTS ${ESPCLAW_DIR}/components)
 
+# ---- Platform detection ----
+if(WIN32)
+    add_compile_definitions(PLATFORM_WINDOWS=1)
+    if(MINGW)
+        add_compile_definitions(PLATFORM_MINGW=1)
+    endif()
+else()
+    add_compile_definitions(PLATFORM_LINUX=1)
+endif()
+
 # ---- Build definitions (replaces ESP-IDF Kconfig) ----
 add_compile_definitions(
     SIMULATOR_BUILD
@@ -126,7 +137,8 @@ add_compile_definitions(
     CONFIG_ESP_BOARD_DEV_DISPLAY_LCD_SUPPORT=1
     CONFIG_ESP_CONSOLE_UART_DEFAULT=1
     CONFIG_CLAW_CORE_STAGE_VERBOSITY_VERBOSE=1
-    CONFIG_IDF_TARGET=\"linux-x86_64\"
+    "$<$<BOOL:${WIN32}>:CONFIG_IDF_TARGET=\"windows-x86_64\">"
+    "$<$<NOT:$<BOOL:${WIN32}>>:CONFIG_IDF_TARGET=\"linux-x86_64\">"
 )
 
 # ---- Include paths ----
@@ -137,6 +149,7 @@ set(COMMON_INCLUDES
     ${SIM_INC_DIR}/freertos
     ${SIM_INC_DIR}/mbedtls
     ${SIM_INC_DIR}/lwip
+    ${SIM_INC_DIR}/platform
     # claw_modules
     ${ESPCLAW_COMPONENTS}/claw_modules/claw_core/include
     ${ESPCLAW_COMPONENTS}/claw_modules/claw_core/src
@@ -342,22 +355,43 @@ target_include_directories(esp-claw-desktop PRIVATE
     ${CMAKE_SOURCE_DIR}/components/desktop/include
 )
 
-target_link_libraries(esp-claw-desktop PRIVATE
-    ${CURL_LIBRARIES}
-    ${LUA_LIBRARIES}
-    ${SDL2_LIBRARIES}
-    ${SDL2_TTF_LIBRARIES}
-    ${JSONC_LIBRARIES}
-    png16
-    pthread
-    m
-    dl
-    ssl
-    crypto
-)
+# ---- Platform-conditional libraries ----
+if(WIN32)
+    target_link_libraries(esp-claw-desktop PRIVATE
+        ${CURL_LIBRARIES}
+        ${LUA_LIBRARIES}
+        ${SDL2_LIBRARIES}
+        ${SDL2_TTF_LIBRARIES}
+        ${JSONC_LIBRARIES}
+        png16
+        ws2_32      # Winsock
+        crypt32     # CryptoAPI
+        iphlpapi    # GetAdaptersAddresses
+        wlanapi     # WiFi scanning
+        bcrypt      # BCryptGenRandom
+        ssl         # OpenSSL (WebSocket / AES / MD5)
+        crypto      # OpenSSL crypto
+    )
+else()
+    target_link_libraries(esp-claw-desktop PRIVATE
+        ${CURL_LIBRARIES}
+        ${LUA_LIBRARIES}
+        ${SDL2_LIBRARIES}
+        ${SDL2_TTF_LIBRARIES}
+        ${JSONC_LIBRARIES}
+        png16
+        pthread
+        m
+        dl
+        ssl
+        crypto
+    )
+endif()
 
 target_compile_options(esp-claw-desktop PRIVATE
     -Wall -Wextra
+    $<$<BOOL:${WIN32}>:-D_WIN32_WINNT=0x0601>
+    $<$<BOOL:${WIN32}>:-include;mingw_compat.h>
     ${CURL_CFLAGS_OTHER}
     ${LUA_CFLAGS_OTHER}
     ${SDL2_CFLAGS_OTHER}
@@ -371,6 +405,21 @@ include(${CMAKE_SOURCE_DIR}/components/desktop/CMakeLists.txt)
 
 # Allow the sim to include its own dir as system include (for esp_ headers)
 target_include_directories(esp-claw-desktop SYSTEM BEFORE PRIVATE ${SIM_INC_DIR})
+
+# ---- esp-agent CLI tool (management client) ----
+if(WIN32)
+    add_executable(esp-agent
+        ${CMAKE_SOURCE_DIR}/cli/esp_agent_cli.c
+        ${SIM_HAL_DIR}/cJSON.c
+        ${SIM_HAL_DIR}/platform_utils.c
+    )
+    target_include_directories(esp-agent PRIVATE
+        ${SIM_INC_DIR}
+        ${SIM_INC_DIR}/platform
+    )
+    target_link_libraries(esp-agent PRIVATE ws2_32)
+    target_compile_options(esp-agent PRIVATE -Wall -Wextra)
+endif()
 
 message(STATUS "=== esp-claw Desktop Simulator Build ===")
 message(STATUS "  SDL2:    ${SDL2_LIBRARIES}")

@@ -1,13 +1,11 @@
 /*
- * console_unix.c — esp_console over Unix domain socket for desktop simulator
+ * console_unix.c — esp_console over Unix socket / Windows Named Pipe
  *
- * Replaces ESP-IDF's UART/USB console transport.  A listening Unix socket at
- * ~/.esp-agent/agent.sock accepts sequential client connections; each receives
- * a single command, executes it via the esp_console command registry, writes
- * the response back, and closes — non-interactive one-shot RPC.
+ * Replaces ESP-IDF's UART/USB console transport.
+ *   Linux:   Unix domain socket at ~/.esp-agent/agent.sock
+ *   Windows: Named Pipe at \\.\pipe\esp-agent
  *
- * This preserves the upstream esp-claw CLI command parsing/routing unchanged;
- * only the transport is replaced (serial character device → datagram socket).
+ * Non-interactive one-shot RPC: one command per connection.
  */
 #include "esp_console.h"
 #include "esp_log.h"
@@ -19,10 +17,18 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/socket.h>
-#include <sys/stat.h>
-#include <sys/un.h>
 #include <unistd.h>
+
+#if defined(PLATFORM_WINDOWS)
+# define WIN32_LEAN_AND_MEAN
+# include <windows.h>
+# include <io.h>
+# include <fcntl.h>
+#else
+# include <sys/socket.h>
+# include <sys/stat.h>
+# include <sys/un.h>
+#endif
 
 static const char *TAG = "console_unix";
 
@@ -34,15 +40,52 @@ static esp_console_cmd_t s_commands[CONSOLE_MAX_COMMANDS];
 static size_t            s_command_count;
 static bool              s_help_registered;
 
-/* ---- socket state ---- */
+/* ---- transport state ---- */
+#if defined(PLATFORM_WINDOWS)
+# define PIPE_NAME_STR  "\\\\.\\pipe\\esp-agent"
+static HANDLE      s_pipe_handle = INVALID_HANDLE_VALUE;
+#else
 static char        s_sock_path[256];
 static int         s_listen_fd = -1;
+#endif
 static pthread_t   s_accept_thread;
 static volatile bool s_accept_running;
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                           */
 /* ------------------------------------------------------------------ */
+
+#if defined(PLATFORM_WINDOWS)
+
+static void resolve_data_dir(char *buf, size_t size)
+{
+    const char *data_dir = getenv("ESP_AGENT_DATA_DIR");
+    if (data_dir) {
+        strncpy(buf, data_dir, size - 1);
+        buf[size - 1] = '\0';
+        return;
+    }
+    const char *home = getenv("USERPROFILE");
+    if (!home) home = getenv("HOMEDRIVE");
+    snprintf(buf, size, "%s\\.esp-agent", home ? home : ".");
+}
+
+static void ensure_parent_dir(const char *path)
+{
+    char dir[256];
+    strncpy(dir, path, sizeof(dir) - 1);
+    dir[sizeof(dir) - 1] = '\0';
+    /* Find last separator (Windows accepts both / and \) */
+    char *slash = strrchr(dir, '/');
+    char *bslash = strrchr(dir, '\\');
+    char *sep = (bslash && (!slash || bslash > slash)) ? bslash : slash;
+    if (sep) {
+        *sep = '\0';
+        CreateDirectoryA(dir, NULL);
+    }
+}
+
+#else /* POSIX */
 
 static void resolve_default_socket_path(const char *hint)
 {
@@ -71,6 +114,8 @@ static void ensure_parent_dir(const char *path)
         mkdir(dir, 0755);
     }
 }
+
+#endif
 
 /*
  * Tokenise a command line into argc/argv in-place (modifies *line).
@@ -220,6 +265,49 @@ esp_err_t esp_console_run(const char *command_line, int *cmd_ret)
 /*  One-shot session — read one command, execute, return response     */
 /* ------------------------------------------------------------------ */
 
+#if defined(PLATFORM_WINDOWS)
+
+static void oneshot_session(HANDLE hPipe)
+{
+    /* Save original stdout fd */
+    int saved_stdout = _dup(_fileno(stdout));
+    fflush(stdout);
+
+    /* Duplicate the pipe HANDLE so the CRT can own it independently.
+     * The original hPipe stays valid and will be closed by the loop. */
+    HANDLE hStdoutPipe;
+    if (!DuplicateHandle(GetCurrentProcess(), hPipe,
+                         GetCurrentProcess(), &hStdoutPipe,
+                         0, FALSE, DUPLICATE_SAME_ACCESS)) {
+        _close(saved_stdout);
+        return;
+    }
+
+    int pipe_fd = _open_osfhandle((intptr_t)hStdoutPipe, _O_WRONLY | _O_TEXT);
+    _dup2(pipe_fd, _fileno(stdout));
+    _close(pipe_fd);
+
+    /* Read command from Named Pipe */
+    char buf[CONSOLE_MAX_CMDLINE];
+    DWORD bytesRead;
+    if (ReadFile(hPipe, buf, sizeof(buf) - 1, &bytesRead, NULL) && bytesRead > 0) {
+        buf[bytesRead] = '\0';
+        while (bytesRead > 0 && (buf[bytesRead - 1] == '\n' || buf[bytesRead - 1] == '\r'))
+            buf[--bytesRead] = '\0';
+        if (bytesRead > 0) {
+            int cmd_ret;
+            esp_console_run(buf, &cmd_ret);
+        }
+    }
+
+    fflush(stdout);
+    _dup2(saved_stdout, _fileno(stdout));
+    _close(saved_stdout);
+    FlushFileBuffers(hPipe);
+}
+
+#else /* POSIX */
+
 static void oneshot_session(int client_fd)
 {
     /* Redirect only stdout to the client socket so command output
@@ -248,9 +336,50 @@ static void oneshot_session(int client_fd)
     close(saved_stdout);
 }
 
+#endif
+
 /* ------------------------------------------------------------------ */
 /*  Accept thread — serves one-shot clients sequentially              */
 /* ------------------------------------------------------------------ */
+
+#if defined(PLATFORM_WINDOWS)
+
+static void *accept_thread(void *arg)
+{
+    (void)arg;
+    ESP_LOGI(TAG, "accept loop started on " PIPE_NAME_STR);
+    s_accept_running = true;
+
+    while (s_accept_running) {
+        HANDLE hPipe = CreateNamedPipeA(
+            PIPE_NAME_STR,
+            PIPE_ACCESS_DUPLEX,
+            PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
+            PIPE_UNLIMITED_INSTANCES,
+            4096, 4096, 0, NULL);
+
+        if (hPipe == INVALID_HANDLE_VALUE) {
+            ESP_LOGE(TAG, "CreateNamedPipe failed: %lu", GetLastError());
+            if (s_accept_running) usleep(500000); /* 500ms backoff */
+            continue;
+        }
+
+        BOOL connected = ConnectNamedPipe(hPipe, NULL);
+        if (!connected && GetLastError() != ERROR_PIPE_CONNECTED) {
+            CloseHandle(hPipe);
+            if (s_accept_running) usleep(100000);
+            continue;
+        }
+
+        oneshot_session(hPipe);
+        DisconnectNamedPipe(hPipe);
+        CloseHandle(hPipe);
+    }
+
+    return NULL;
+}
+
+#else /* POSIX */
 
 static void *accept_thread(void *arg)
 {
@@ -275,6 +404,8 @@ static void *accept_thread(void *arg)
     return NULL;
 }
 
+#endif
+
 /* ------------------------------------------------------------------ */
 /*  Public API: create REPL                                           */
 /* ------------------------------------------------------------------ */
@@ -286,6 +417,11 @@ esp_err_t esp_console_new_repl_uart(const esp_console_dev_uart_config_t *dev_con
     (void)repl_config;
     if (!ret_repl) return ESP_ERR_INVALID_ARG;
 
+#if defined(PLATFORM_WINDOWS)
+    char data_dir[256];
+    resolve_data_dir(data_dir, sizeof(data_dir));
+    ensure_parent_dir(data_dir);
+#else
     resolve_default_socket_path(dev_config ? dev_config->socket_path : NULL);
     ensure_parent_dir(s_sock_path);
 
@@ -315,16 +451,23 @@ esp_err_t esp_console_new_repl_uart(const esp_console_dev_uart_config_t *dev_con
         s_listen_fd = -1;
         return ESP_FAIL;
     }
+#endif
 
     *ret_repl = calloc(1, 1); /* non-NULL opaque handle */
     if (!*ret_repl) {
+#if !defined(PLATFORM_WINDOWS)
         close(s_listen_fd);
         unlink(s_sock_path);
         s_listen_fd = -1;
+#endif
         return ESP_ERR_NO_MEM;
     }
 
+#if defined(PLATFORM_WINDOWS)
+    ESP_LOGI(TAG, "Named Pipe ready at " PIPE_NAME_STR);
+#else
     ESP_LOGI(TAG, "Unix socket ready at %s", s_sock_path);
+#endif
     return ESP_OK;
 }
 
@@ -335,10 +478,12 @@ esp_err_t esp_console_new_repl_uart(const esp_console_dev_uart_config_t *dev_con
 esp_err_t esp_console_start_repl(esp_console_repl_t *repl)
 {
     (void)repl;
+#if !defined(PLATFORM_WINDOWS)
     if (s_listen_fd < 0) {
         ESP_LOGE(TAG, "start_repl: socket not initialised");
         return ESP_ERR_INVALID_STATE;
     }
+#endif
 
     int rc = pthread_create(&s_accept_thread, NULL, accept_thread, NULL);
     if (rc != 0) {

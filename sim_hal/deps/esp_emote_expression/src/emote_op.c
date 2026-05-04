@@ -460,7 +460,11 @@ esp_err_t emote_set_label_clock(emote_handle_t handle)
     time_t now;
     struct tm timeinfo;
     time(&now);
+#if defined(_WIN32)
+    localtime_s(&timeinfo, (const time_t *)&now);
+#else
     localtime_r(&now, &timeinfo);
+#endif
 
     char time_str[10];
     snprintf(time_str, sizeof(time_str), "%02d:%02d", timeinfo.tm_hour, timeinfo.tm_min);

@@ -58,10 +58,11 @@ esp_err_t mmap_assets_new(const mmap_assets_config_t *cfg,
 
     struct dirent *entry;
     while ((entry = readdir(d)) != NULL && h->count < MAX_ASSETS) {
-        if (entry->d_type == DT_DIR) continue;
-
+        /* d_type/DT_DIR is Linux-specific; use stat() for portability */
         char path[1024];
         snprintf(path, sizeof(path), "%s/%s", dir, entry->d_name);
+        struct stat st;
+        if (stat(path, &st) == 0 && S_ISDIR(st.st_mode)) continue;
 
         FILE *fp = fopen(path, "rb");
         if (!fp) continue;
