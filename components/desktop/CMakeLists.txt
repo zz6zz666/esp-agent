@@ -16,6 +16,5 @@ target_include_directories(esp-claw-desktop PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/include
 )
 
-# Future desktop component sources go here:
-# file(GLOB_RECURSE desktop_srcs src/*.c)
-# target_sources(esp-claw-desktop PRIVATE ${desktop_srcs})
+file(GLOB_RECURSE desktop_srcs ${CMAKE_CURRENT_LIST_DIR}/src/*.c)
+target_sources(esp-claw-desktop PRIVATE ${desktop_srcs})
