@@ -33,6 +33,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: checkedonce
 Name: "path"; Description: "Add to &PATH environment variable (run esp-agent from any terminal)"; GroupDescription: "Environment:"; Flags: checkedonce
+Name: "autostart"; Description: "Start with Wi&ndows (auto-run on login)"; GroupDescription: "Startup:"; Flags: checkedonce
 
 [Files]
 ; Main binaries
@@ -108,6 +109,12 @@ Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Control\Session Manager\Environmen
     ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};{app}"; \
     Tasks: path; Check: NeedsAddPath(ExpandConstant('{app}'))
 
+; Auto-start with Windows (per-user Run key)
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; \
+    ValueType: string; ValueName: "esp-agent"; \
+    ValueData: """{app}\{#MyAgentExeName}"" --daemon"; \
+    Tasks: autostart
+
 [Run]
 ; Launch agent as background daemon (no console, no log tail)
 Filename: "{app}\{#MyAgentExeName}"; Parameters: "--daemon"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent runhidden
@@ -129,4 +136,17 @@ begin
     exit;
   end;
   Result := Pos(';' + UpperCase(Param) + ';', ';' + UpperCase(OrigPath) + ';') = 0;
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  ResultCode: Integer;
+begin
+  NeedsRestart := False;
+  Result := '';
+  if FileExists(ExpandConstant('{app}\{#MyAppExeName}')) then
+  begin
+    Exec(ExpandConstant('{app}\{#MyAppExeName}'), 'stop',
+         '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  end;
 end;

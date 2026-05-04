@@ -32,10 +32,16 @@ static HMENU  s_menu = NULL;
 #define IDM_SHOW     2001
 #define IDM_HIDE     2002
 #define IDM_EXIT     2003
+#define IDM_AUTOSTART 2004
 #define IDI_CLAW     1
 
-/* ---- Forward decl ---- */
+#define REG_AUTOSTART_KEY "Software\\Microsoft\\Windows\\CurrentVersion\\Run"
+#define REG_AUTOSTART_VAL "esp-agent"
+
+/* ---- Forward decls ---- */
 static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
+static bool tray_autostart_is_enabled(void);
+static void tray_autostart_set_enabled(bool enable);
 
 /* ---- Public API ---- */
 
@@ -78,10 +84,55 @@ bool tray_icon_init(void)
     AppendMenuA(s_menu, MF_STRING, IDM_SHOW, "Show Window");
     AppendMenuA(s_menu, MF_STRING, IDM_HIDE, "Hide to Tray");
     AppendMenuA(s_menu, MF_SEPARATOR, 0, NULL);
+    AppendMenuA(s_menu, MF_STRING | (tray_autostart_is_enabled() ? MF_CHECKED : 0),
+                IDM_AUTOSTART, "Start with Windows");
+    AppendMenuA(s_menu, MF_SEPARATOR, 0, NULL);
     AppendMenuA(s_menu, MF_STRING, IDM_EXIT, "Exit");
 
     s_initialized = true;
     return true;
+}
+
+/* ---- Autostart registry helpers ---- */
+
+static bool tray_autostart_is_enabled(void)
+{
+    HKEY hKey;
+    char val[1024];
+    DWORD size = sizeof(val);
+    if (RegOpenKeyExA(HKEY_CURRENT_USER, REG_AUTOSTART_KEY,
+                      0, KEY_READ, &hKey) != ERROR_SUCCESS)
+        return false;
+    LONG rc = RegQueryValueExA(hKey, REG_AUTOSTART_VAL, NULL, NULL,
+                                (LPBYTE)val, &size);
+    RegCloseKey(hKey);
+    return rc == ERROR_SUCCESS;
+}
+
+static void tray_autostart_set_enabled(bool enable)
+{
+    HKEY hKey;
+    if (RegCreateKeyExA(HKEY_CURRENT_USER, REG_AUTOSTART_KEY,
+                        0, NULL, 0, KEY_SET_VALUE, NULL, &hKey, NULL)
+        != ERROR_SUCCESS)
+        return;
+    if (enable) {
+        char exe_path[MAX_PATH];
+        if (GetModuleFileNameA(NULL, exe_path, sizeof(exe_path))) {
+            char *slash = strrchr(exe_path, '\\');
+            if (slash) {
+                snprintf(slash + 1, sizeof(exe_path) - (size_t)(slash + 1 - exe_path),
+                         "%s", "esp-claw-desktop.exe");
+            }
+            char val[MAX_PATH + 16];
+            snprintf(val, sizeof(val), "\"%s\" --daemon", exe_path);
+            RegSetValueExA(hKey, REG_AUTOSTART_VAL, 0, REG_SZ,
+                           (const BYTE *)val, (DWORD)(strlen(val) + 1));
+        }
+    } else {
+        RegDeleteValueA(hKey, REG_AUTOSTART_VAL);
+    }
+    RegCloseKey(hKey);
 }
 
 void tray_icon_set_sdl_window(void *hwnd)
@@ -154,6 +205,9 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     switch (msg) {
     case WM_TRAYICON:
         if (lp == WM_RBUTTONUP || lp == WM_CONTEXTMENU) {
+            /* Update autostart checkmark before showing menu */
+            CheckMenuItem(s_menu, IDM_AUTOSTART,
+                tray_autostart_is_enabled() ? MF_CHECKED : MF_UNCHECKED);
             /* Right-click: show popup menu */
             POINT pt;
             GetCursorPos(&pt);
@@ -178,9 +232,13 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         case IDM_HIDE:
             tray_icon_hide_window();
             break;
+        case IDM_AUTOSTART: {
+            bool cur = tray_autostart_is_enabled();
+            tray_autostart_set_enabled(!cur);
+            break;
+        }
         case IDM_EXIT:
             s_quit_requested = true;
-            /* Post WM_QUIT so SDL's main loop sees it */
             break;
         }
         break;
