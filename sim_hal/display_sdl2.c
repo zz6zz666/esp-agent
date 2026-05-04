@@ -4,8 +4,7 @@
  * All drawing uses a back-buffer SDL_Surface in RGB565 (matching ESP LCD format).
  * On present(), the surface is converted to an SDL_Texture and rendered.
  */
-#include <SDL2/SDL.h>
-#include <SDL2/SDL_ttf.h>
+#include <dirent.h>
 #include <math.h>
 #include <pthread.h>
 #include <stdbool.h>
@@ -13,6 +12,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+
+#include <SDL2/SDL.h>
+#include <SDL2/SDL_ttf.h>
 
 #include "display_hal.h"
 #include "esp_err.h"
@@ -50,13 +54,37 @@ static pthread_cond_t s_present_cond = PTHREAD_COND_INITIALIZER;
 static volatile bool g_present_pending = false;
 static bool s_ttf_ok = false;
 
+/* ---- Glyph cache (avoids re-rasterizing emoji / text every frame) ---- */
+#define GLYPH_CACHE_MAX 512
+
+typedef struct {
+    Uint32      codepoint;
+    int         ptsize;
+    int         font_idx;       /* index into s_font_stack */
+    uint16_t    fg_color565;
+    SDL_Surface *surf;          /* owned, pre-scaled RGBA32 */
+    int         last_used;
+} glyph_cache_entry_t;
+
+static glyph_cache_entry_t s_glyph_cache[GLYPH_CACHE_MAX];
+static int                 s_glyph_cache_count = 0;
+static int                 s_glyph_cache_tick  = 0;
+static pthread_mutex_t     s_glyph_cache_mutex = PTHREAD_MUTEX_INITIALIZER;
+
 /* forward declarations */
 esp_err_t display_hal_destroy(void);
 static volatile bool g_display_quit_requested = false;
 static void font_stack_close(void);
+static void glyph_cache_clear(void);
+static void glyph_cache_load_all(void);
 static int  font_stack_load(int ptsize);
 static TTF_Font *font_for_codepoint(Uint32 cp);
 static Uint32 utf8_decode(const char **p);
+static int  utf8_encode(Uint32 cp, char *buf);
+static SDL_Surface *glyph_cache_lookup(Uint32 cp, int ptsize,
+                                        int font_idx, uint16_t color565);
+static void glyph_cache_insert(Uint32 cp, int ptsize, int font_idx,
+                                uint16_t color565, SDL_Surface *surf);
 
 void display_hal_mark_frame_ready(void)
 {
@@ -204,6 +232,7 @@ esp_err_t display_hal_create(esp_lcd_panel_handle_t panel_handle,
         if (s_font_path_count > 0) {
             s_ttf_ok = true;
             font_stack_load(16);
+            glyph_cache_load_all();
             ESP_LOGI(TAG, "TTF font stack loaded (%d fonts)", s_font_path_count);
         } else {
             ESP_LOGW(TAG, "No TTF fonts found — text will not render");
@@ -247,16 +276,24 @@ esp_err_t display_hal_present(void)
     if (!s_ctx.texture || !s_ctx.surface) return ESP_ERR_INVALID_STATE;
 
     if (pthread_equal(pthread_self(), s_main_thread)) {
-        /* Main thread: execute SDL2 GPU rendering (always, no gate).
-           If a worker thread is waiting on g_present_pending, signal it. */
+        /* Main thread: execute SDL2 GPU rendering.
+           Skip when a worker thread is composing a frame (frame_active=true)
+           but hasn't requested a present yet (g_present_pending=false).
+           This prevents presenting partially-drawn frames during slow
+           operations like emoji glyph blitting. */
         pthread_mutex_lock(&s_present_mutex);
-        SDL_UpdateTexture(s_ctx.texture, NULL, s_ctx.surface->pixels, s_ctx.width * 2);
-        SDL_RenderClear(s_ctx.renderer);
-        SDL_RenderCopy(s_ctx.renderer, s_ctx.texture, NULL, NULL);
-        SDL_RenderPresent(s_ctx.renderer);
-        g_present_pending = false;
-        pthread_cond_broadcast(&s_present_cond);
-        pthread_mutex_unlock(&s_present_mutex);
+        if (!g_present_pending && s_ctx.frame_active) {
+            pthread_mutex_unlock(&s_present_mutex);
+        } else {
+            SDL_UpdateTexture(s_ctx.texture, NULL,
+                              s_ctx.surface->pixels, s_ctx.width * 2);
+            SDL_RenderClear(s_ctx.renderer);
+            SDL_RenderCopy(s_ctx.renderer, s_ctx.texture, NULL, NULL);
+            SDL_RenderPresent(s_ctx.renderer);
+            g_present_pending = false;
+            pthread_cond_broadcast(&s_present_cond);
+            pthread_mutex_unlock(&s_present_mutex);
+        }
 
         /* Pump events so the window stays responsive */
         SDL_Event ev;
@@ -583,6 +620,7 @@ static int font_stack_load(int ptsize)
     if (s_font_stack_count > 0 && ptsize == s_font_stack_ptsize)
         return s_font_stack_count;
 
+    glyph_cache_clear();
     font_stack_close();
     s_font_stack_ptsize = ptsize;
 
@@ -650,6 +688,209 @@ static Uint32 utf8_decode(const char **p)
     return cp;
 }
 
+/* Encode one Unicode codepoint to UTF-8, return byte count. */
+static int utf8_encode(Uint32 cp, char *buf)
+{
+    if (cp < 0x80) {
+        buf[0] = (char)cp;
+        return 1;
+    } else if (cp < 0x800) {
+        buf[0] = (char)(0xC0 | (cp >> 6));
+        buf[1] = (char)(0x80 | (cp & 0x3F));
+        return 2;
+    } else if (cp < 0x10000) {
+        buf[0] = (char)(0xE0 | (cp >> 12));
+        buf[1] = (char)(0x80 | ((cp >> 6) & 0x3F));
+        buf[2] = (char)(0x80 | (cp & 0x3F));
+        return 3;
+    } else {
+        buf[0] = (char)(0xF0 | (cp >> 18));
+        buf[1] = (char)(0x80 | ((cp >> 12) & 0x3F));
+        buf[2] = (char)(0x80 | ((cp >> 6) & 0x3F));
+        buf[3] = (char)(0x80 | (cp & 0x3F));
+        return 4;
+    }
+}
+
+static void glyph_cache_get_dir(char *buf, size_t bufsz)
+{
+    const char *home = getenv("HOME");
+    if (!home) home = "/tmp";
+    snprintf(buf, bufsz, "%s/.esp-agent/glyph_cache", home);
+}
+
+static void glyph_cache_clear(void)
+{
+    pthread_mutex_lock(&s_glyph_cache_mutex);
+    for (int i = 0; i < s_glyph_cache_count; i++) {
+        if (s_glyph_cache[i].surf) SDL_FreeSurface(s_glyph_cache[i].surf);
+    }
+    s_glyph_cache_count = 0;
+    pthread_mutex_unlock(&s_glyph_cache_mutex);
+}
+
+/* Insert without disk I/O (used when loading from disk on startup). */
+static void glyph_cache_add_entry(Uint32 cp, int ptsize, int font_idx,
+                                   uint16_t color565, SDL_Surface *surf)
+{
+    if (!surf) return;
+
+    /* Evict LRU entry if cache is full */
+    if (s_glyph_cache_count >= GLYPH_CACHE_MAX) {
+        int lru = 0;
+        for (int i = 1; i < s_glyph_cache_count; i++) {
+            if (s_glyph_cache[i].last_used < s_glyph_cache[lru].last_used)
+                lru = i;
+        }
+        SDL_FreeSurface(s_glyph_cache[lru].surf);
+        s_glyph_cache[lru] = s_glyph_cache[--s_glyph_cache_count];
+    }
+
+    s_glyph_cache[s_glyph_cache_count].codepoint   = cp;
+    s_glyph_cache[s_glyph_cache_count].ptsize      = ptsize;
+    s_glyph_cache[s_glyph_cache_count].font_idx     = font_idx;
+    s_glyph_cache[s_glyph_cache_count].fg_color565  = color565;
+    s_glyph_cache[s_glyph_cache_count].surf         = surf;
+    s_glyph_cache[s_glyph_cache_count].last_used    = s_glyph_cache_tick++;
+    s_glyph_cache_count++;
+}
+
+/* Save a single glyph to disk.  File format:
+ *   [4 bytes LE] width
+ *   [4 bytes LE] height
+ *   [w * h * 4 bytes] RGBA32 pixels  */
+static void glyph_cache_save(Uint32 cp, int ptsize, int font_idx,
+                              uint16_t color565, SDL_Surface *surf)
+{
+    if (!surf) return;
+
+    char dir[512];
+    glyph_cache_get_dir(dir, sizeof(dir));
+    mkdir(dir, 0755);
+
+    char path[768];
+    snprintf(path, sizeof(path), "%s/%X_%d_%d_%X.cache",
+             dir, cp, ptsize, font_idx, (unsigned)color565);
+
+    FILE *f = fopen(path, "wb");
+    if (!f) return;
+
+    uint32_t w = (uint32_t)surf->w;
+    uint32_t h = (uint32_t)surf->h;
+    fwrite(&w, 4, 1, f);
+    fwrite(&h, 4, 1, f);
+
+    /* Write row by row because SDL_Surface pitch may differ from w*4 */
+    for (int y = 0; y < surf->h; y++) {
+        fwrite((uint8_t *)surf->pixels + y * surf->pitch, 4, surf->w, f);
+    }
+    fclose(f);
+}
+
+/* Load a single glyph from disk.  Returns NULL if not found or corrupt. */
+static SDL_Surface *glyph_cache_load_from_disk(Uint32 cp, int ptsize,
+                                                int font_idx, uint16_t color565)
+{
+    char dir[512];
+    glyph_cache_get_dir(dir, sizeof(dir));
+
+    char path[768];
+    snprintf(path, sizeof(path), "%s/%X_%d_%d_%X.cache",
+             dir, cp, ptsize, font_idx, (unsigned)color565);
+
+    FILE *f = fopen(path, "rb");
+    if (!f) return NULL;
+
+    uint32_t w = 0, h = 0;
+    if (fread(&w, 4, 1, f) != 1 || fread(&h, 4, 1, f) != 1 ||
+        w == 0 || h == 0 || w > 4096 || h > 4096) {
+        fclose(f);
+        return NULL;
+    }
+
+    SDL_Surface *surf = SDL_CreateRGBSurfaceWithFormat(
+        0, (int)w, (int)h, 32, SDL_PIXELFORMAT_RGBA32);
+    if (!surf) { fclose(f); return NULL; }
+
+    uint8_t *row = malloc(w * 4);
+    if (!row) { SDL_FreeSurface(surf); fclose(f); return NULL; }
+
+    for (uint32_t y = 0; y < h; y++) {
+        if (fread(row, 4, w, f) != w) {
+            free(row); SDL_FreeSurface(surf); fclose(f); return NULL;
+        }
+        memcpy((uint8_t *)surf->pixels + y * surf->pitch, row, w * 4);
+    }
+    free(row);
+    fclose(f);
+
+    SDL_SetSurfaceBlendMode(surf, SDL_BLENDMODE_BLEND);
+    return surf;
+}
+
+/* Scan the disk cache directory and pre-warm the in-memory cache. */
+static void glyph_cache_load_all(void)
+{
+    char dir[512];
+    glyph_cache_get_dir(dir, sizeof(dir));
+    mkdir(dir, 0755);
+
+    DIR *d = opendir(dir);
+    if (!d) return;
+
+    struct dirent *ent;
+    while ((ent = readdir(d)) != NULL) {
+        unsigned cp_hex, color_hex;
+        int ptsize, font_idx;
+        if (sscanf(ent->d_name, "%X_%d_%d_%X.cache",
+                   &cp_hex, &ptsize, &font_idx, &color_hex) == 4) {
+            /* Only load if the font index is still valid for the current
+               stack.  Stale entries (from a different font configuration)
+               are silently ignored. */
+            if (font_idx >= s_font_stack_count) continue;
+
+            SDL_Surface *surf = glyph_cache_load_from_disk(
+                (Uint32)cp_hex, ptsize, font_idx, (uint16_t)color_hex);
+            if (surf) {
+                pthread_mutex_lock(&s_glyph_cache_mutex);
+                glyph_cache_add_entry((Uint32)cp_hex, ptsize, font_idx,
+                                      (uint16_t)color_hex, surf);
+                pthread_mutex_unlock(&s_glyph_cache_mutex);
+            }
+        }
+    }
+    closedir(d);
+}
+
+static SDL_Surface *glyph_cache_lookup(Uint32 cp, int ptsize,
+                                        int font_idx, uint16_t color565)
+{
+    pthread_mutex_lock(&s_glyph_cache_mutex);
+    for (int i = 0; i < s_glyph_cache_count; i++) {
+        if (s_glyph_cache[i].codepoint == cp &&
+            s_glyph_cache[i].ptsize == ptsize &&
+            s_glyph_cache[i].font_idx == font_idx &&
+            s_glyph_cache[i].fg_color565 == color565) {
+            s_glyph_cache[i].last_used = s_glyph_cache_tick++;
+            SDL_Surface *s = s_glyph_cache[i].surf;
+            pthread_mutex_unlock(&s_glyph_cache_mutex);
+            return s;
+        }
+    }
+    pthread_mutex_unlock(&s_glyph_cache_mutex);
+    return NULL;
+}
+
+static void glyph_cache_insert(Uint32 cp, int ptsize, int font_idx,
+                                uint16_t color565, SDL_Surface *surf)
+{
+    if (!surf) return;
+    pthread_mutex_lock(&s_glyph_cache_mutex);
+    glyph_cache_add_entry(cp, ptsize, font_idx, color565, surf);
+    pthread_mutex_unlock(&s_glyph_cache_mutex);
+    glyph_cache_save(cp, ptsize, font_idx, color565, surf);
+}
+
 esp_err_t display_hal_measure_text(const char *text, uint8_t font_size,
                                     uint16_t *out_w, uint16_t *out_h)
 {
@@ -712,6 +953,7 @@ esp_err_t display_hal_draw_text(int x, int y, const char *text, uint8_t font_siz
     int ptsize = font_size * 16;
     if (font_stack_load(ptsize) == 0) return ESP_OK;
 
+    int line_h = font_stack_line_height();
     SDL_Color fg = { 0, 0, 0, 255 };
     rgb565_to_rgb(text_color, &fg.r, &fg.g, &fg.b);
 
@@ -719,38 +961,34 @@ esp_err_t display_hal_draw_text(int x, int y, const char *text, uint8_t font_siz
     int cx = x;
 
     while (*p) {
-        const char *seg_start = p;
         Uint32 cp = utf8_decode(&p);
         TTF_Font *font = font_for_codepoint(cp);
 
-        /* group consecutive chars that use the same font */
-        while (*p) {
-            const char *next = p;
-            Uint32 next_cp = utf8_decode(&next);
-            if (font_for_codepoint(next_cp) != font) break;
-            p = next;
+        /* Find font index for cache key */
+        int font_idx = 0;
+        for (int i = 0; i < s_font_stack_count; i++) {
+            if (s_font_stack[i] == font) { font_idx = i; break; }
         }
 
-        size_t seg_len = p - seg_start;
-        char *seg_buf = malloc(seg_len + 1);
-        if (!seg_buf) continue;
-        memcpy(seg_buf, seg_start, seg_len);
-        seg_buf[seg_len] = '\0';
+        /* Check glyph cache — large emoji bitmaps are expensive to
+           re-rasterize every frame, so we keep pre-rendered surfaces. */
+        SDL_Surface *glyph = glyph_cache_lookup(cp, ptsize, font_idx,
+                                                 text_color);
 
-        SDL_Surface *glyph = TTF_RenderUTF8_Blended(font, seg_buf, fg);
-        free(seg_buf);
+        if (!glyph) {
+            char mb[5];
+            int mb_len = utf8_encode(cp, mb);
+            mb[mb_len] = '\0';
 
-        if (glyph) {
-            int g_w = glyph->w;
-            int g_h = glyph->h;
+            glyph = TTF_RenderUTF8_Blended(font, mb, fg);
+            if (!glyph) continue;
 
-            /* Noto Color Emoji uses fixed-size bitmaps (~136 px) regardless
-               of point size.  Scale the glyph down to the text line height
-               so emoji don't dwarf surrounding CJK text. */
-            int line_h = font_stack_line_height();
-            if (g_h > line_h * 3 / 2) {
-                float scale = (float)line_h / (float)g_h;
-                int new_w = (int)(g_w * scale);
+            /* Noto Color Emoji uses fixed-size bitmaps (~136 px).
+               Scale down to the text line height so emoji don't
+               dwarf surrounding CJK text. */
+            if (glyph->h > line_h * 3 / 2) {
+                float scale = (float)line_h / (float)glyph->h;
+                int new_w = (int)(glyph->w * scale);
                 int new_h = line_h;
                 SDL_Surface *scaled = SDL_CreateRGBSurfaceWithFormat(
                     0, new_w, new_h, 32, SDL_PIXELFORMAT_RGBA32);
@@ -759,21 +997,20 @@ esp_err_t display_hal_draw_text(int x, int y, const char *text, uint8_t font_siz
                     SDL_BlitScaled(glyph, NULL, scaled, NULL);
                     SDL_FreeSurface(glyph);
                     glyph = scaled;
-                    g_w = new_w;
-                    g_h = new_h;
                 }
             }
 
-            if (has_bg) {
-                SDL_Rect bg_rect = { cx, y, g_w, g_h };
-                SDL_FillRect(s_ctx.surface, &bg_rect, bg_color);
-            }
             SDL_SetSurfaceBlendMode(glyph, SDL_BLENDMODE_BLEND);
-            SDL_Rect dst = { cx, y, g_w, g_h };
-            SDL_BlitSurface(glyph, NULL, s_ctx.surface, &dst);
-            cx += g_w;
-            SDL_FreeSurface(glyph);
+            glyph_cache_insert(cp, ptsize, font_idx, text_color, glyph);
         }
+
+        if (has_bg) {
+            SDL_Rect bg_rect = { cx, y, glyph->w, glyph->h };
+            SDL_FillRect(s_ctx.surface, &bg_rect, bg_color);
+        }
+        SDL_Rect dst = { cx, y, glyph->w, glyph->h };
+        SDL_BlitSurface(glyph, NULL, s_ctx.surface, &dst);
+        cx += glyph->w;
     }
     return ESP_OK;
 }
