@@ -32,6 +32,7 @@ static HMENU  s_menu = NULL;
 #define IDM_SHOW     2001
 #define IDM_HIDE     2002
 #define IDM_EXIT     2003
+#define IDI_CLAW     1
 
 /* ---- Forward decl ---- */
 static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
@@ -49,7 +50,7 @@ bool tray_icon_init(void)
     wc.lpszClassName = "EspAgentTrayClass";
     wc.hCursor       = LoadCursor(NULL, IDC_ARROW);
     /* use a small system icon as fallback; the NOTIFYICONDATA also sets an icon */
-    wc.hIcon         = LoadIcon(NULL, IDI_INFORMATION);
+    wc.hIcon         = LoadIconA(GetModuleHandleA(NULL), MAKEINTRESOURCEA(IDI_CLAW));
 
     if (!RegisterClassA(&wc)) return false;
 
@@ -67,7 +68,7 @@ bool tray_icon_init(void)
     s_nid.uID              = TRAY_UID;
     s_nid.uFlags           = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     s_nid.uCallbackMessage = WM_TRAYICON;
-    s_nid.hIcon            = LoadIcon(NULL, IDI_INFORMATION);
+    s_nid.hIcon            = LoadIconA(GetModuleHandleA(NULL), MAKEINTRESOURCEA(IDI_CLAW));
     strncpy(s_nid.szTip, "esp-agent Desktop Simulator", sizeof(s_nid.szTip) - 1);
 
     Shell_NotifyIconA(NIM_ADD, &s_nid);

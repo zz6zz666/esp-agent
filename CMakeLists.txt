@@ -344,6 +344,9 @@ add_executable(esp-claw-desktop
     ${EMOTE_SRCS}
     ${ESPCLAW_SRCS}
 )
+if(WIN32)
+    target_sources(esp-claw-desktop PRIVATE ${CMAKE_SOURCE_DIR}/resources.rc)
+endif()
 
 target_include_directories(esp-claw-desktop PRIVATE
     ${COMMON_INCLUDES}
@@ -413,6 +416,7 @@ if(WIN32)
         ${CMAKE_SOURCE_DIR}/cli/esp_agent_cli.c
         ${SIM_HAL_DIR}/cJSON.c
         ${SIM_HAL_DIR}/platform_utils.c
+        ${CMAKE_SOURCE_DIR}/resources.rc
     )
     target_include_directories(esp-agent PRIVATE
         ${SIM_INC_DIR}
