@@ -479,6 +479,16 @@ int main(int argc, char **argv)
 #if defined(PLATFORM_WINDOWS)
     SetConsoleOutputCP(CP_UTF8);
     SetProcessDPIAware();
+    /* Enable ANSI escape codes on Windows 10+ */
+    {
+        HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+        DWORD mode = 0;
+        if (GetConsoleMode(hOut, &mode))
+            SetConsoleMode(hOut, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+        HANDLE hErr = GetStdHandle(STD_ERROR_HANDLE);
+        if (GetConsoleMode(hErr, &mode))
+            SetConsoleMode(hErr, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+    }
     SetConsoleCtrlHandler(win_ctrl_handler, TRUE);
     signal(SIGINT, sig_handler);
     signal(SIGTERM, sig_handler);

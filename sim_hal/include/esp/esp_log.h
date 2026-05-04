@@ -40,14 +40,29 @@ static inline void _esp_log_write(const char *level, const char *tag, const char
     struct tm tm_info;
     char time_buf[32];
     va_list args, copy;
+    const char *color = "";
+
+    /* ANSI color for log level */
+    switch (level[0]) {
+    case 'E': color = "\033[31m"; break;  /* red */
+    case 'W': color = "\033[33m"; break;  /* yellow */
+    case 'I': color = "\033[32m"; break;  /* green */
+    case 'D': color = "\033[37m"; break;  /* white (bright) */
+    case 'V': color = "\033[0m";  break;  /* reset */
+    default:  break;
+    }
 
     gettimeofday(&tv, NULL);
+    {
+        time_t t = (time_t)tv.tv_sec;
 #if defined(_WIN32)
-    localtime_s(&tm_info, (const time_t *)&tv.tv_sec);
+        localtime_s(&tm_info, &t);
 #else
-    localtime_r(&tv.tv_sec, &tm_info);
+        localtime_r(&t, &tm_info);
 #endif
+    }
     strftime(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S", &tm_info);
+    int msec = (int)(tv.tv_usec / 1000);
 
     va_start(args, fmt);
     va_copy(copy, args);  /* copy before consuming */
@@ -55,15 +70,15 @@ static inline void _esp_log_write(const char *level, const char *tag, const char
     pthread_mutex_lock(&g_esp_log_mutex);
 
     /* Write to stderr (terminal or /dev/null in daemon mode) */
-    fprintf(stderr, "[%s.%03ld] [%s] [%s] ", time_buf, tv.tv_usec / 1000, level, tag);
+    fprintf(stderr, "%s[%s.%03d] [%s] [%s] ", color, time_buf, msec, level, tag);
     vfprintf(stderr, fmt, args);
-    fprintf(stderr, "\n");
+    fprintf(stderr, "\033[0m\n");
     fflush(stderr);
     va_end(args);
 
     /* Also write to log file if configured */
     if (g_esp_log_file) {
-        fprintf(g_esp_log_file, "[%s.%03ld] [%s] [%s] ", time_buf, tv.tv_usec / 1000, level, tag);
+        fprintf(g_esp_log_file, "[%s.%03d] [%s] [%s] ", time_buf, msec, level, tag);
         vfprintf(g_esp_log_file, fmt, copy);
         fprintf(g_esp_log_file, "\n");
         fflush(g_esp_log_file);

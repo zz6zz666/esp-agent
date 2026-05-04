@@ -109,7 +109,8 @@ Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Control\Session Manager\Environmen
     Tasks: path; Check: NeedsAddPath(ExpandConstant('{app}'))
 
 [Run]
-Filename: "{app}\{#MyAgentExeName}"; Parameters: "--foreground"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
+; Launch agent as background daemon (no console, no log tail)
+Filename: "{app}\{#MyAgentExeName}"; Parameters: "--daemon"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent runhidden
 
 [UninstallRun]
 ; Terminate running agent before uninstall

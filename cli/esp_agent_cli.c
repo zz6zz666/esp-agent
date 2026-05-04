@@ -425,20 +425,23 @@ static int cmd_start(int argc, char **argv)
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
 
-    printf("Agent started (detached process)\n");
-    printf("Data directory: %s\n", data_dir);
+    printf("Agent started (PID %lu)\n", GetCurrentProcessId());
 
     /* Wait a moment for the agent to write its PID */
-    Sleep(1500);
+    Sleep(1000);
 
     /* Verify PID file exists */
     if (pid_file_exists()) {
-        printf("PID file written successfully.\n");
-        printf("Use 'esp-agent logs' to view logs.\n");
+        char pid_path[512];
+        get_pid_path(pid_path, sizeof(pid_path));
+        printf("PID file: %s\n", pid_path);
     } else {
         printf("Warning: PID file not yet written, agent may still be starting.\n");
     }
-    return 0;
+
+    /* Auto-tail logs (Linux-style behavior) */
+    printf("\n");
+    return cmd_logs(0, NULL);
 
 #else
     /* POSIX: use existing shell script approach */
