@@ -573,6 +573,24 @@ static int cmd_status(int argc, char **argv)
     return 0;
 }
 
+static void print_log_colored(const char *line)
+{
+    const char *color = "";
+    if (line[0] == '[') {
+        const char *b = strchr(line + 1, '[');
+        if (b && b[1] && b[2] == ']') {
+            switch (b[1]) {
+            case 'E': color = "\033[31m"; break;
+            case 'W': color = "\033[33m"; break;
+            case 'I': color = "\033[32m"; break;
+            case 'D': color = "\033[37m"; break;
+            }
+        }
+    }
+    printf("%s%s\033[0m", color, line);
+    fflush(stdout);
+}
+
 static int cmd_logs(int argc, char **argv)
 {
     (void)argc; (void)argv;
@@ -594,7 +612,7 @@ static int cmd_logs(int argc, char **argv)
 
     char line[4096];
     while (fgets(line, sizeof(line), fp)) {
-        fputs(line, stdout);
+        print_log_colored(line);
     }
     fclose(fp);
 
@@ -607,11 +625,10 @@ static int cmd_logs(int argc, char **argv)
         if (!fp) break;
         fseek(fp, sz, SEEK_SET);
         while (fgets(line, sizeof(line), fp)) {
-            fputs(line, stdout);
+            print_log_colored(line);
         }
         sz = ftell(fp);
         fclose(fp);
-        fflush(stdout);
         platform_sleep_ms(500);
     }
     return 0;

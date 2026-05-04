@@ -24,8 +24,9 @@ WizardStyle=modern
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=admin
+UsePreviousTasks=no
 UninstallDisplayIcon={app}\{#MyAppExeName}
-SetupIconFile=assets\lobster.ico
+SetupIconFile={#SourcePath}\assets\lobster.ico
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
