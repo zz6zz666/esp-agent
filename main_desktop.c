@@ -29,12 +29,14 @@
 #include "app_capabilities.h"
 #include "cap_cli.h"
 #include "cJSON.h"
+#include "component_desktop.h"
 #include "claw_core.h"
 #include "claw_event_publisher.h"
 #include "claw_event_router.h"
 #include "claw_memory.h"
 #include "claw_skill.h"
 #include "display_hal.h"
+#include "display_hal_input.h"
 #include "esp_console.h"
 #include "esp_err.h"
 #include "esp_log.h"
@@ -120,6 +122,13 @@ static void json_get_bool(cJSON *obj, const char *key, bool *out)
     cJSON *item = cJSON_GetObjectItemCaseSensitive(obj, key);
     if (cJSON_IsBool(item))
         *out = cJSON_IsTrue(item);
+}
+
+static void json_get_int(cJSON *obj, const char *key, int *out)
+{
+    cJSON *item = cJSON_GetObjectItemCaseSensitive(obj, key);
+    if (cJSON_IsNumber(item))
+        *out = item->valueint;
 }
 
 /*
@@ -628,6 +637,8 @@ int main(int argc, char **argv)
     app_claw_config_t config;
     memset(&config, 0, sizeof(config));
     bool display_enabled = true; /* default */
+    int lcd_width  = 480;
+    int lcd_height = 480;
 
     /* Default config if missing */
     if (access(config_path, F_OK) != 0) {
@@ -657,7 +668,9 @@ int main(int argc, char **argv)
             "    \"tavily_key\": \"\"\n"
             "  },\n"
             "  \"display\": {\n"
-            "    \"enabled\": true\n"
+            "    \"enabled\": true,\n"
+            "    \"lcd_width\": 480,\n"
+            "    \"lcd_height\": 480\n"
             "  }\n"
             "}\n";
         write_default_json(config_path, default_config);
@@ -739,8 +752,13 @@ int main(int argc, char **argv)
 
                     /* Display section */
                     cJSON *display = cJSON_GetObjectItemCaseSensitive(root, "display");
-                    if (display)
+                    if (display) {
                         json_get_bool(display, "enabled", &display_enabled);
+                        json_get_int(display, "lcd_width", &lcd_width);
+                        json_get_int(display, "lcd_height", &lcd_height);
+                        if (lcd_width < 320)  lcd_width  = 320;
+                        if (lcd_height < 240) lcd_height = 240;
+                    }
 
                     cJSON_Delete(root);
                 }
@@ -815,7 +833,7 @@ int main(int argc, char **argv)
 
     /* ---- SDL2 display (optional) ---- */
     if (display_enabled) {
-        esp_err_t d_err = display_hal_create(NULL, NULL, 0, 320, 240);
+        esp_err_t d_err = display_hal_create(NULL, NULL, 0, lcd_width, lcd_height);
         if (d_err != ESP_OK) {
             ESP_LOGW(TAG, "Failed to create display: %s", esp_err_to_name(d_err));
         }
@@ -891,6 +909,9 @@ int main(int argc, char **argv)
     }
 #endif
 
+    /* Desktop input capability (mouse + keyboard) */
+    cap_input_register_group();
+
     /* ---- start emote engine (boot animation) ---- */
     err = app_claw_ui_start();
     if (err != ESP_OK) {
@@ -905,7 +926,9 @@ int main(int argc, char **argv)
                 0xFFDF, false, 0,
                 DISPLAY_HAL_TEXT_ALIGN_CENTER, DISPLAY_HAL_TEXT_VALIGN_TOP);
             display_hal_draw_line(40, 48, w - 40, 48, 0x52AA);
-            display_hal_draw_text(16, 60, "Display: SDL2 320x240", 1,
+            char disp_info[48];
+            snprintf(disp_info, sizeof(disp_info), "Display: SDL2 %dx%d", w, h);
+            display_hal_draw_text(16, 60, disp_info, 1,
                 0xCE59, false, 0);
             display_hal_draw_text(16, 80, "Emote not available", 1,
                 0xCE59, false, 0);
@@ -928,11 +951,11 @@ int main(int argc, char **argv)
         /* Pump tray icon messages */
         tray_icon_pump();
 #endif
+        display_hal_present();             /* always pump — processes lifecycle ops */
         if (display_hal_is_active()) {
-            display_hal_present();
-            vTaskDelay(pdMS_TO_TICKS(16)); /* ~60 Hz */
+            vTaskDelay(pdMS_TO_TICKS(16)); /* ~60 Hz when rendering */
         } else {
-            vTaskDelay(pdMS_TO_TICKS(500));
+            vTaskDelay(pdMS_TO_TICKS(100));
         }
     }
 

@@ -13,6 +13,8 @@
  */
 #pragma once
 
+#include "esp_err.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -26,6 +28,9 @@ extern "C" {
 
 /* Version string for desktop component packages */
 #define CLAW_DESKTOP_COMPONENT_VERSION "1.0.0"
+
+/* Register the desktop_input capability group (mouse + keyboard input). */
+esp_err_t cap_input_register_group(void);
 
 #ifdef __cplusplus
 }

@@ -30,8 +30,12 @@
 #include <SDL2/SDL_ttf.h>
 
 #include "display_hal.h"
+#include "display_hal_input.h"
+#include "display_arbiter.h"
 #include "esp_err.h"
+#include "esp_lcd_touch.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 
 static const char *TAG = "display_sdl2";
 
@@ -117,15 +121,51 @@ typedef struct {
     SDL_Window   *window;
     SDL_Renderer *renderer;
     SDL_Texture  *texture;
-    SDL_Surface  *surface;    /* RGB565 back-buffer */
-    int width;
+    SDL_Surface  *surface;    /* RGB565 back-buffer (size = current mode) */
+    int width;                /* configured LCD size (Agent/Lua visible) */
     int height;
+    int emu_width;            /* emote size (fixed 320) */
+    int emu_height;           /* emote size (fixed 240) */
+    int surf_w, surf_h;       /* actual surface/texture dimensions */
+    int expected_w, expected_h; /* locked window size (reject external resize) */
     bool frame_active;
+    bool lua_mode;            /* true = Lua window active, false = emote */
+    bool pending_switch;      /* true = destroy+recreate window next present */
+    bool pending_lua_target;  /* target mode for pending_switch */
     int clip_x, clip_y, clip_w, clip_h;
     bool clip_enabled;
+    /* Lifecycle ops delegated from worker thread to main thread */
+    bool lifecycle_pending;
+    int  lifecycle_op;        /* 0=none, 1=create, 2=destroy */
+    int  lifecycle_w, lifecycle_h;
+    bool lifecycle_done;
+    esp_err_t lifecycle_result;
+    pthread_mutex_t lifecycle_mutex;
+    pthread_cond_t lifecycle_cond;
 } sdl_ctx_t;
 
+/* ---- Input state (SDL → touch bridge + HAL input API) ---- */
+
+typedef struct {
+    int16_t x, y;            /* logical display coords (scaled from window) */
+    bool left, middle, right;
+    int wheel;               /* accumulated scroll ticks */
+    bool moved;
+} mouse_state_t;
+
+typedef struct {
+    mouse_state_t mouse;
+    uint8_t keys[SDL_NUM_SCANCODES];  /* 0=up, 1=down */
+    uint16_t modifiers;               /* active SDL_Keymod bits */
+    input_event_t queue[INPUT_EVENT_QUEUE_SIZE];
+    int queue_head, queue_count;
+    pthread_mutex_t mutex;
+    int window_w, window_h;           /* current window pixel size */
+    float scale_x, scale_y;           /* window / logical */
+} input_state_t;
+
 static sdl_ctx_t s_ctx = {0};
+static input_state_t s_input = {0};
 static pthread_t s_main_thread;
 static pthread_mutex_t s_present_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t s_present_cond = PTHREAD_COND_INITIALIZER;
@@ -209,16 +249,45 @@ static inline void rgb565_to_rgb(uint16_t c, uint8_t *r, uint8_t *g, uint8_t *b)
 static void put_pixel(int x, int y, uint16_t color)
 {
     if (!s_ctx.surface) return;
-    if (x < 0 || x >= s_ctx.width || y < 0 || y >= s_ctx.height) return;
+    if (x < 0 || x >= s_ctx.surf_w || y < 0 || y >= s_ctx.surf_h) return;
     if (s_ctx.clip_enabled) {
         if (x < s_ctx.clip_x || x >= s_ctx.clip_x + s_ctx.clip_w ||
             y < s_ctx.clip_y || y >= s_ctx.clip_y + s_ctx.clip_h) return;
     }
     uint16_t *pixels = (uint16_t *)s_ctx.surface->pixels;
-    pixels[y * s_ctx.width + x] = color;
+    pixels[y * s_ctx.surf_w + x] = color;
 }
 
 /* ---- Lifecycle ---- */
+
+/* Recreate surface + texture at the given size.  Caller must hold
+ * s_present_mutex and be on the main thread. */
+static esp_err_t recreate_surface(int w, int h)
+{
+    if (s_ctx.surface) SDL_FreeSurface(s_ctx.surface);
+    if (s_ctx.texture) SDL_DestroyTexture(s_ctx.texture);
+
+    s_ctx.surface = SDL_CreateRGBSurfaceWithFormat(0, w, h, 16,
+                                                    SDL_PIXELFORMAT_RGB565);
+    if (!s_ctx.surface) {
+        ESP_LOGE(TAG, "recreate surface (%dx%d) failed: %s", w, h, SDL_GetError());
+        return ESP_ERR_NO_MEM;
+    }
+
+    s_ctx.texture = SDL_CreateTexture(s_ctx.renderer,
+                                       SDL_PIXELFORMAT_RGB565,
+                                       SDL_TEXTUREACCESS_STREAMING, w, h);
+    if (!s_ctx.texture) {
+        ESP_LOGE(TAG, "recreate texture (%dx%d) failed: %s", w, h, SDL_GetError());
+        SDL_FreeSurface(s_ctx.surface);
+        s_ctx.surface = NULL;
+        return ESP_ERR_NO_MEM;
+    }
+
+    s_ctx.surf_w = w;
+    s_ctx.surf_h = h;
+    return ESP_OK;
+}
 
 esp_err_t display_hal_create(esp_lcd_panel_handle_t panel_handle,
                              esp_lcd_panel_io_handle_t io_handle,
@@ -227,75 +296,101 @@ esp_err_t display_hal_create(esp_lcd_panel_handle_t panel_handle,
 {
     (void)panel_handle; (void)io_handle; (void)panel_if;
 
-    if (s_ctx.window) {
-        if (s_ctx.width == lcd_width && s_ctx.height == lcd_height) {
-            return ESP_OK;
+    int lcd_w = lcd_width  > 0 ? lcd_width  : 480;
+    int lcd_h = lcd_height > 0 ? lcd_height : 480;
+
+    /* If already on the main thread, do SDL ops directly (startup path) */
+    if (pthread_equal(pthread_self(), s_main_thread) || s_main_thread == 0) {
+        if (s_ctx.window) {
+            if (s_ctx.width == lcd_w && s_ctx.height == lcd_h) {
+                return ESP_OK;
+            }
+            display_hal_destroy();
         }
-        display_hal_destroy();
+
+        if (SDL_Init(SDL_INIT_VIDEO) < 0) {
+            ESP_LOGE(TAG, "SDL_Init failed: %s", SDL_GetError());
+            return ESP_FAIL;
+        }
+
+        s_ctx.width  = lcd_w;
+        s_ctx.height = lcd_h;
+        s_ctx.emu_width  = 320;
+        s_ctx.emu_height = 240;
+
+        s_ctx.expected_w = s_ctx.emu_width;
+        s_ctx.expected_h = s_ctx.emu_height;
+        s_ctx.lua_mode = false;
+
+        s_ctx.window = SDL_CreateWindow("esp-claw Desktop Simulator",
+                                         SDL_WINDOWPOS_UNDEFINED,
+                                         SDL_WINDOWPOS_UNDEFINED,
+                                         s_ctx.emu_width, s_ctx.emu_height,
+                                         SDL_WINDOW_SHOWN);
+        if (!s_ctx.window) {
+            ESP_LOGE(TAG, "SDL_CreateWindow failed: %s", SDL_GetError());
+            SDL_Quit();
+            return ESP_FAIL;
+        }
+
+        s_ctx.renderer = SDL_CreateRenderer(s_ctx.window, -1,
+                                             SDL_RENDERER_ACCELERATED |
+                                             SDL_RENDERER_PRESENTVSYNC);
+        if (!s_ctx.renderer) {
+            ESP_LOGE(TAG, "SDL_CreateRenderer failed: %s", SDL_GetError());
+            SDL_DestroyWindow(s_ctx.window);
+            SDL_Quit();
+            return ESP_FAIL;
+        }
+        SDL_SetRenderDrawColor(s_ctx.renderer, 0, 0, 0, 255);
+
+        if (recreate_surface(s_ctx.emu_width, s_ctx.emu_height) != ESP_OK) {
+            SDL_DestroyRenderer(s_ctx.renderer);
+            SDL_DestroyWindow(s_ctx.window);
+            SDL_Quit();
+            return ESP_FAIL;
+        }
+
+        s_main_thread = pthread_self();
+        goto init_fonts_and_input;
     }
 
-    if (SDL_Init(SDL_INIT_VIDEO) < 0) {
-        ESP_LOGE(TAG, "SDL_Init failed: %s", SDL_GetError());
-        return ESP_FAIL;
+    /* ---- Worker thread path: delegate to main thread ----
+
+       Use the configured LCD size (s_ctx.width/height) rather than
+       the passed hardware params.  The Lua module may pass the board's
+       hardware LCD size, but the Lua display window should use the
+       configurable virtual LCD size (default 480x480, matching config.json). */
+
+    /* Store params and request main-thread creation */
+    pthread_mutex_lock(&s_ctx.lifecycle_mutex);
+    s_ctx.lifecycle_w = s_ctx.width;
+    s_ctx.lifecycle_h = s_ctx.height;
+    s_ctx.lifecycle_op = 1; /* create */
+    s_ctx.lifecycle_pending = true;
+    s_ctx.lifecycle_done = false;
+
+    /* Wake main loop */
+    pthread_mutex_lock(&s_present_mutex);
+    g_present_pending = true;
+    pthread_cond_broadcast(&s_present_cond);
+    pthread_mutex_unlock(&s_present_mutex);
+
+    /* Wait for main thread to complete */
+    while (!s_ctx.lifecycle_done) {
+        pthread_cond_wait(&s_ctx.lifecycle_cond, &s_ctx.lifecycle_mutex);
     }
+    s_ctx.lifecycle_pending = false;
+    esp_err_t result = s_ctx.lifecycle_result;
+    pthread_mutex_unlock(&s_ctx.lifecycle_mutex);
+    return result;
 
-    s_ctx.width = lcd_width > 0 ? lcd_width : 320;
-    s_ctx.height = lcd_height > 0 ? lcd_height : 240;
-
-    s_ctx.window = SDL_CreateWindow("esp-claw Desktop Simulator",
-                                     SDL_WINDOWPOS_UNDEFINED,
-                                     SDL_WINDOWPOS_UNDEFINED,
-                                     s_ctx.width * 2,  /* 2x scale */
-                                     s_ctx.height * 2,
-                                     SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
-    if (!s_ctx.window) {
-        ESP_LOGE(TAG, "SDL_CreateWindow failed: %s", SDL_GetError());
-        SDL_Quit();
-        return ESP_FAIL;
-    }
-
-    s_ctx.renderer = SDL_CreateRenderer(s_ctx.window, -1,
-                                         SDL_RENDERER_ACCELERATED |
-                                         SDL_RENDERER_PRESENTVSYNC);
-    if (!s_ctx.renderer) {
-        ESP_LOGE(TAG, "SDL_CreateRenderer failed: %s", SDL_GetError());
-        SDL_DestroyWindow(s_ctx.window);
-        SDL_Quit();
-        return ESP_FAIL;
-    }
-    SDL_SetRenderDrawColor(s_ctx.renderer, 0, 0, 0, 255);
-
-    /* RGB565 surface as back-buffer */
-    s_ctx.surface = SDL_CreateRGBSurfaceWithFormat(0, s_ctx.width, s_ctx.height,
-                                                    16, SDL_PIXELFORMAT_RGB565);
-    if (!s_ctx.surface) {
-        ESP_LOGE(TAG, "SDL_CreateRGBSurface failed: %s", SDL_GetError());
-        SDL_DestroyRenderer(s_ctx.renderer);
-        SDL_DestroyWindow(s_ctx.window);
-        SDL_Quit();
-        return ESP_FAIL;
-    }
-
-    s_ctx.texture = SDL_CreateTexture(s_ctx.renderer,
-                                       SDL_PIXELFORMAT_RGB565,
-                                       SDL_TEXTUREACCESS_STREAMING,
-                                       s_ctx.width, s_ctx.height);
-    if (!s_ctx.texture) {
-        ESP_LOGE(TAG, "SDL_CreateTexture failed: %s", SDL_GetError());
-        SDL_FreeSurface(s_ctx.surface);
-        SDL_DestroyRenderer(s_ctx.renderer);
-        SDL_DestroyWindow(s_ctx.window);
-        SDL_Quit();
-        return ESP_FAIL;
-    }
-
+init_fonts_and_input:
     /* TTF font stack for text rendering (CJK + emoji + symbols fallback) */
     if (TTF_Init() < 0) {
         ESP_LOGW(TAG, "TTF_Init failed: %s", TTF_GetError());
         s_ttf_ok = false;
     } else {
-        /* Discover font files in priority order.  The first font that provides
-           a glyph is used; later fonts act as fallback for missing codepoints. */
         discover_fonts();
 
         if (s_font_path_count > 0) {
@@ -309,19 +404,60 @@ esp_err_t display_hal_create(esp_lcd_panel_handle_t panel_handle,
         }
     }
 
-    s_main_thread = pthread_self();
-    ESP_LOGI(TAG, "Display created: %dx%d (main_thread=%lu)",
-             s_ctx.width, s_ctx.height, (unsigned long)s_main_thread);
+    /* Init input state (1:1 scale — no window scaling ever) */
+    pthread_mutex_init(&s_input.mutex, NULL);
+    pthread_mutex_init(&s_ctx.lifecycle_mutex, NULL);
+    pthread_cond_init(&s_ctx.lifecycle_cond, NULL);
+    s_input.window_w = s_ctx.emu_width;
+    s_input.window_h = s_ctx.emu_height;
+    s_input.scale_x = 1.0f;
+    s_input.scale_y = 1.0f;
+    esp_lcd_touch_init_sdl();
+
+    ESP_LOGI(TAG, "Display created: LCD=%dx%d emu=%dx%d (main_thread=%lu)",
+             s_ctx.width, s_ctx.height, s_ctx.emu_width, s_ctx.emu_height,
+             (unsigned long)s_main_thread);
     return ESP_OK;
 }
 
 esp_err_t display_hal_destroy(void)
 {
-    /* SDL2 window, renderer, texture, and surface are created once at
-       startup on the main thread and live for the entire process lifetime.
-       Destroying them from Lua's disp.deinit() would tear down resources
-       that the main loop and emote engine still depend on. */
-    return ESP_OK;
+    /* Main thread path: destroy SDL resources directly (shutdown) */
+    if (pthread_equal(pthread_self(), s_main_thread)) {
+        if (s_ctx.texture)  { SDL_DestroyTexture(s_ctx.texture);   s_ctx.texture = NULL; }
+        if (s_ctx.surface)  { SDL_FreeSurface(s_ctx.surface);      s_ctx.surface = NULL; }
+        if (s_ctx.renderer) { SDL_DestroyRenderer(s_ctx.renderer); s_ctx.renderer = NULL; }
+        if (s_ctx.window)   { SDL_DestroyWindow(s_ctx.window);     s_ctx.window = NULL; }
+        s_ctx.surf_w = 0;
+        s_ctx.surf_h = 0;
+        s_ctx.frame_active = false;
+        s_ctx.lua_mode = false;
+        s_ctx.pending_switch = false;
+        return ESP_OK;
+    }
+
+    /* Worker thread path (Lua deinit): delegate to main thread.
+       If Lua window is active, the main thread will destroy it and
+       re-create the emote window so the emote engine can resume. */
+    pthread_mutex_lock(&s_ctx.lifecycle_mutex);
+    s_ctx.lifecycle_op = 2; /* destroy / switch back to emote */
+    s_ctx.lifecycle_pending = true;
+    s_ctx.lifecycle_done = false;
+
+    /* Wake main loop */
+    pthread_mutex_lock(&s_present_mutex);
+    g_present_pending = true;
+    pthread_cond_broadcast(&s_present_cond);
+    pthread_mutex_unlock(&s_present_mutex);
+
+    /* Wait for main thread to complete */
+    while (!s_ctx.lifecycle_done) {
+        pthread_cond_wait(&s_ctx.lifecycle_cond, &s_ctx.lifecycle_mutex);
+    }
+    s_ctx.lifecycle_pending = false;
+    esp_err_t result = s_ctx.lifecycle_result;
+    pthread_mutex_unlock(&s_ctx.lifecycle_mutex);
+    return result;
 }
 
 /* ---- Geometry ---- */
@@ -333,51 +469,415 @@ int display_hal_height(void) { return s_ctx.height; }
 
 esp_err_t display_hal_begin_frame(bool clear, uint16_t color565)
 {
-    if (clear) {
-        SDL_FillRect(s_ctx.surface, NULL, color565);
+    /* Trigger switch to Lua-sized window (destroy+create on main thread) */
+    if (!s_ctx.lua_mode) {
+        s_ctx.pending_switch = true;
+        s_ctx.pending_lua_target = true;
     }
+    /* Do NOT clear old surface here — it's the wrong size until the main
+       thread processes the switch.  The new surface is cleared after creation. */
+    (void)clear;
+    (void)color565;
     s_ctx.frame_active = true;
     return ESP_OK;
 }
 
+/* Process all pending SDL events.  Returns true if SDL_QUIT was seen. */
+static bool process_sdl_events(void)
+{
+    SDL_Event ev;
+    bool quit_seen = false;
+
+    while (SDL_PollEvent(&ev)) {
+        switch (ev.type) {
+        case SDL_QUIT:
+            ESP_LOGI(TAG, "Window closed by user");
+            g_display_quit_requested = true;
+            quit_seen = true;
+            break;
+
+        case SDL_MOUSEMOTION:
+            pthread_mutex_lock(&s_input.mutex);
+            s_input.mouse.x = (int16_t)(ev.motion.x / s_input.scale_x);
+            s_input.mouse.y = (int16_t)(ev.motion.y / s_input.scale_y);
+            s_input.mouse.moved = true;
+            pthread_mutex_unlock(&s_input.mutex);
+            /* Feed to touch bridge when button is held */
+            if (s_input.mouse.left || s_input.mouse.right) {
+                esp_lcd_touch_feed_sdl(s_input.mouse.x, s_input.mouse.y, true);
+            }
+            break;
+
+        case SDL_MOUSEBUTTONDOWN:
+        case SDL_MOUSEBUTTONUP: {
+            bool pressed = (ev.type == SDL_MOUSEBUTTONDOWN);
+            pthread_mutex_lock(&s_input.mutex);
+            int16_t mx = (int16_t)(ev.button.x / s_input.scale_x);
+            int16_t my = (int16_t)(ev.button.y / s_input.scale_y);
+            s_input.mouse.x = mx;
+            s_input.mouse.y = my;
+            switch (ev.button.button) {
+            case SDL_BUTTON_LEFT:   s_input.mouse.left = pressed; break;
+            case SDL_BUTTON_MIDDLE: s_input.mouse.middle = pressed; break;
+            case SDL_BUTTON_RIGHT:  s_input.mouse.right = pressed; break;
+            }
+            /* Enqueue event */
+            if (s_input.queue_count < INPUT_EVENT_QUEUE_SIZE) {
+                int idx = (s_input.queue_head + s_input.queue_count)
+                          % INPUT_EVENT_QUEUE_SIZE;
+                s_input.queue[idx].type = pressed
+                    ? INPUT_EVENT_MOUSE_DOWN : INPUT_EVENT_MOUSE_UP;
+                s_input.queue[idx].x = mx;
+                s_input.queue[idx].y = my;
+                s_input.queue[idx].button = ev.button.button;
+                s_input.queue[idx].mod = s_input.modifiers;
+                s_input.queue_count++;
+            }
+            pthread_mutex_unlock(&s_input.mutex);
+            /* Feed touch bridge */
+            esp_lcd_touch_feed_sdl(mx, my, pressed);
+            break;
+        }
+
+        case SDL_MOUSEWHEEL:
+            pthread_mutex_lock(&s_input.mutex);
+            s_input.mouse.wheel += ev.wheel.y;
+            if (s_input.queue_count < INPUT_EVENT_QUEUE_SIZE) {
+                int idx = (s_input.queue_head + s_input.queue_count)
+                          % INPUT_EVENT_QUEUE_SIZE;
+                s_input.queue[idx].type = INPUT_EVENT_MOUSE_WHEEL;
+                s_input.queue[idx].x = s_input.mouse.x;
+                s_input.queue[idx].y = s_input.mouse.y;
+                s_input.queue[idx].button = ev.wheel.y;
+                s_input.queue[idx].mod = s_input.modifiers;
+                s_input.queue_count++;
+            }
+            pthread_mutex_unlock(&s_input.mutex);
+            break;
+
+        case SDL_KEYDOWN:
+        case SDL_KEYUP: {
+            bool pressed = (ev.type == SDL_KEYDOWN);
+            SDL_Scancode sc = ev.key.keysym.scancode;
+            pthread_mutex_lock(&s_input.mutex);
+            if (sc < SDL_NUM_SCANCODES) {
+                s_input.keys[sc] = pressed ? 1 : 0;
+            }
+            s_input.modifiers = ev.key.keysym.mod;
+            if (s_input.queue_count < INPUT_EVENT_QUEUE_SIZE) {
+                int idx = (s_input.queue_head + s_input.queue_count)
+                          % INPUT_EVENT_QUEUE_SIZE;
+                s_input.queue[idx].type = pressed
+                    ? INPUT_EVENT_KEY_DOWN : INPUT_EVENT_KEY_UP;
+                s_input.queue[idx].key = sc;
+                s_input.queue[idx].mod = ev.key.keysym.mod;
+                s_input.queue[idx].x = s_input.mouse.x;
+                s_input.queue[idx].y = s_input.mouse.y;
+                s_input.queue_count++;
+            }
+            pthread_mutex_unlock(&s_input.mutex);
+            break;
+        }
+
+        case SDL_TEXTINPUT:
+            pthread_mutex_lock(&s_input.mutex);
+            if (s_input.queue_count < INPUT_EVENT_QUEUE_SIZE) {
+                int idx = (s_input.queue_head + s_input.queue_count)
+                          % INPUT_EVENT_QUEUE_SIZE;
+                s_input.queue[idx].type = INPUT_EVENT_TEXT;
+                strncpy(s_input.queue[idx].text, ev.text.text,
+                        INPUT_TEXT_MAX - 1);
+                s_input.queue[idx].text[INPUT_TEXT_MAX - 1] = '\0';
+                s_input.queue[idx].x = s_input.mouse.x;
+                s_input.queue[idx].y = s_input.mouse.y;
+                s_input.queue[idx].mod = s_input.modifiers;
+                s_input.queue_count++;
+            }
+            pthread_mutex_unlock(&s_input.mutex);
+            break;
+
+        case SDL_WINDOWEVENT:
+            /* Reject any external window resize/maximize — force back */
+            if (s_ctx.window && (ev.window.event == SDL_WINDOWEVENT_SIZE_CHANGED ||
+                ev.window.event == SDL_WINDOWEVENT_MAXIMIZED ||
+                ev.window.event == SDL_WINDOWEVENT_RESIZED)) {
+                int cur_w, cur_h;
+                SDL_GetWindowSize(s_ctx.window, &cur_w, &cur_h);
+                if (cur_w != s_ctx.expected_w || cur_h != s_ctx.expected_h) {
+                    SDL_SetWindowSize(s_ctx.window,
+                                      s_ctx.expected_w, s_ctx.expected_h);
+                }
+            }
+            break;
+        }
+    }
+    return quit_seen;
+}
+
 esp_err_t display_hal_present(void)
 {
-    if (!s_ctx.texture || !s_ctx.surface) return ESP_ERR_INVALID_STATE;
-
     if (pthread_equal(pthread_self(), s_main_thread)) {
-        /* Main thread: execute SDL2 GPU rendering.
-           Skip when a worker thread is composing a frame (frame_active=true)
-           but hasn't requested a present yet (g_present_pending=false).
-           This prevents presenting partially-drawn frames during slow
-           operations like emoji glyph blitting. */
-        pthread_mutex_lock(&s_present_mutex);
-        if (!g_present_pending && s_ctx.frame_active) {
-            pthread_mutex_unlock(&s_present_mutex);
-        } else {
+        /* ---- Handle pending lifecycle ops (delegated from worker thread) ---- */
+        if (s_ctx.lifecycle_pending) {
+            pthread_mutex_lock(&s_ctx.lifecycle_mutex);
+            int op = s_ctx.lifecycle_op;
+            int lw = s_ctx.lifecycle_w;
+            int lh = s_ctx.lifecycle_h;
+            pthread_mutex_unlock(&s_ctx.lifecycle_mutex);
+
+            esp_err_t lc_result = ESP_OK;
+
+            if (op == 1) {
+                /* create: destroy current window, create new one at Lua LCD size */
+                if (s_ctx.texture)  { SDL_DestroyTexture(s_ctx.texture);   s_ctx.texture = NULL; }
+                if (s_ctx.surface)  { SDL_FreeSurface(s_ctx.surface);      s_ctx.surface = NULL; }
+                if (s_ctx.renderer) { SDL_DestroyRenderer(s_ctx.renderer); s_ctx.renderer = NULL; }
+                if (s_ctx.window)   { SDL_DestroyWindow(s_ctx.window);     s_ctx.window = NULL; }
+                s_ctx.frame_active = false;
+                s_ctx.pending_switch = false;
+
+                s_ctx.width  = lw;
+                s_ctx.height = lh;
+
+                s_ctx.window = SDL_CreateWindow("esp-claw Lua Display",
+                                                 SDL_WINDOWPOS_UNDEFINED,
+                                                 SDL_WINDOWPOS_UNDEFINED,
+                                                 lw, lh, SDL_WINDOW_SHOWN);
+                if (!s_ctx.window) {
+                    ESP_LOGE(TAG, "Lifecycle create: SDL_CreateWindow(%dx%d) failed: %s",
+                             lw, lh, SDL_GetError());
+                    lc_result = ESP_FAIL;
+                    goto lifecycle_done;
+                }
+
+                s_ctx.renderer = SDL_CreateRenderer(s_ctx.window, -1,
+                                                     SDL_RENDERER_ACCELERATED |
+                                                     SDL_RENDERER_PRESENTVSYNC);
+                if (!s_ctx.renderer) {
+                    ESP_LOGE(TAG, "Lifecycle create: SDL_CreateRenderer failed: %s",
+                             SDL_GetError());
+                    SDL_DestroyWindow(s_ctx.window);
+                    s_ctx.window = NULL;
+                    lc_result = ESP_FAIL;
+                    goto lifecycle_done;
+                }
+                SDL_SetRenderDrawColor(s_ctx.renderer, 0, 0, 0, 255);
+
+                if (recreate_surface(lw, lh) != ESP_OK) {
+                    SDL_DestroyRenderer(s_ctx.renderer);
+                    SDL_DestroyWindow(s_ctx.window);
+                    s_ctx.renderer = NULL;
+                    s_ctx.window = NULL;
+                    lc_result = ESP_FAIL;
+                    goto lifecycle_done;
+                }
+                SDL_FillRect(s_ctx.surface, NULL, 0x0000);
+
+                s_ctx.lua_mode = true;
+                s_ctx.expected_w = lw;
+                s_ctx.expected_h = lh;
+
+                pthread_mutex_lock(&s_input.mutex);
+                s_input.window_w = lw;
+                s_input.window_h = lh;
+                s_input.scale_x = 1.0f;
+                s_input.scale_y = 1.0f;
+                pthread_mutex_unlock(&s_input.mutex);
+
+                ESP_LOGI(TAG, "Window created for Lua: %dx%d", lw, lh);
+
+            } else if (op == 2) {
+                /* destroy (from Lua deinit): switch back to emote window */
+                bool was_lua = s_ctx.lua_mode;
+
+                if (s_ctx.window) {
+                    if (s_ctx.texture)  { SDL_DestroyTexture(s_ctx.texture);   s_ctx.texture = NULL; }
+                    if (s_ctx.surface)  { SDL_FreeSurface(s_ctx.surface);      s_ctx.surface = NULL; }
+                    if (s_ctx.renderer) { SDL_DestroyRenderer(s_ctx.renderer); s_ctx.renderer = NULL; }
+                    if (s_ctx.window)   { SDL_DestroyWindow(s_ctx.window);     s_ctx.window = NULL; }
+                }
+                s_ctx.frame_active = false;
+                s_ctx.lua_mode = false;
+                s_ctx.pending_switch = false;
+
+                /* Always re-create the emote window so emote engine can resume */
+                s_ctx.window = SDL_CreateWindow("esp-claw Desktop Simulator",
+                                                 SDL_WINDOWPOS_UNDEFINED,
+                                                 SDL_WINDOWPOS_UNDEFINED,
+                                                 s_ctx.emu_width, s_ctx.emu_height,
+                                                 SDL_WINDOW_SHOWN);
+                if (!s_ctx.window) {
+                    ESP_LOGE(TAG, "Lifecycle destroy: SDL_CreateWindow failed: %s",
+                             SDL_GetError());
+                    lc_result = ESP_FAIL;
+                    goto lifecycle_done;
+                }
+
+                s_ctx.renderer = SDL_CreateRenderer(s_ctx.window, -1,
+                                                     SDL_RENDERER_ACCELERATED |
+                                                     SDL_RENDERER_PRESENTVSYNC);
+                if (!s_ctx.renderer) {
+                    ESP_LOGE(TAG, "Lifecycle destroy: SDL_CreateRenderer failed: %s",
+                             SDL_GetError());
+                    SDL_DestroyWindow(s_ctx.window);
+                    s_ctx.window = NULL;
+                    lc_result = ESP_FAIL;
+                    goto lifecycle_done;
+                }
+                SDL_SetRenderDrawColor(s_ctx.renderer, 0, 0, 0, 255);
+
+                if (recreate_surface(s_ctx.emu_width, s_ctx.emu_height) != ESP_OK) {
+                    SDL_DestroyRenderer(s_ctx.renderer);
+                    SDL_DestroyWindow(s_ctx.window);
+                    s_ctx.renderer = NULL;
+                    s_ctx.window = NULL;
+                    lc_result = ESP_FAIL;
+                    goto lifecycle_done;
+                }
+                SDL_FillRect(s_ctx.surface, NULL, 0x0000);
+
+                s_ctx.expected_w = s_ctx.emu_width;
+                s_ctx.expected_h = s_ctx.emu_height;
+
+                pthread_mutex_lock(&s_input.mutex);
+                s_input.window_w = s_ctx.emu_width;
+                s_input.window_h = s_ctx.emu_height;
+                s_input.scale_x = 1.0f;
+                s_input.scale_y = 1.0f;
+                pthread_mutex_unlock(&s_input.mutex);
+
+                ESP_LOGI(TAG, "Window switched back to emote %dx%d (was_lua=%d)",
+                         s_ctx.emu_width, s_ctx.emu_height, was_lua);
+            }
+
+        lifecycle_done:
+            pthread_mutex_lock(&s_ctx.lifecycle_mutex);
+            s_ctx.lifecycle_done = true;
+            s_ctx.lifecycle_result = lc_result;
+            pthread_cond_broadcast(&s_ctx.lifecycle_cond);
+            pthread_mutex_unlock(&s_ctx.lifecycle_mutex);
+
+            /* Skip rendering this tick — new window has fresh black surface */
+            process_sdl_events();
+            return lc_result;
+        }
+
+        /* ---- Handle pending mode switch (begin_frame → Lua window) ---- */
+        if (s_ctx.pending_switch) {
+            s_ctx.pending_switch = false;
+            bool target_lua = s_ctx.pending_lua_target;
+            int new_w = target_lua ? s_ctx.width  : s_ctx.emu_width;
+            int new_h = target_lua ? s_ctx.height : s_ctx.emu_height;
+
+            /* Destroy current window and all associated resources */
+            if (s_ctx.texture)  { SDL_DestroyTexture(s_ctx.texture);   s_ctx.texture = NULL; }
+            if (s_ctx.surface)  { SDL_FreeSurface(s_ctx.surface);      s_ctx.surface = NULL; }
+            if (s_ctx.renderer) { SDL_DestroyRenderer(s_ctx.renderer); s_ctx.renderer = NULL; }
+            if (s_ctx.window)   { SDL_DestroyWindow(s_ctx.window);     s_ctx.window = NULL; }
+            s_ctx.frame_active = false;
+
+            /* Create new window at target size */
+            const char *title = target_lua
+                ? "esp-claw Lua Display"
+                : "esp-claw Desktop Simulator";
+            s_ctx.window = SDL_CreateWindow(title,
+                                             SDL_WINDOWPOS_UNDEFINED,
+                                             SDL_WINDOWPOS_UNDEFINED,
+                                             new_w, new_h,
+                                             SDL_WINDOW_SHOWN);
+            if (!s_ctx.window) {
+                ESP_LOGE(TAG, "Mode switch: SDL_CreateWindow(%dx%d) failed: %s",
+                         new_w, new_h, SDL_GetError());
+                SDL_Quit();
+                return ESP_FAIL;
+            }
+
+            s_ctx.renderer = SDL_CreateRenderer(s_ctx.window, -1,
+                                                 SDL_RENDERER_ACCELERATED |
+                                                 SDL_RENDERER_PRESENTVSYNC);
+            if (!s_ctx.renderer) {
+                ESP_LOGE(TAG, "Mode switch: SDL_CreateRenderer failed: %s",
+                         SDL_GetError());
+                SDL_DestroyWindow(s_ctx.window);
+                s_ctx.window = NULL;
+                SDL_Quit();
+                return ESP_FAIL;
+            }
+            SDL_SetRenderDrawColor(s_ctx.renderer, 0, 0, 0, 255);
+
+            if (recreate_surface(new_w, new_h) != ESP_OK) {
+                SDL_DestroyRenderer(s_ctx.renderer);
+                SDL_DestroyWindow(s_ctx.window);
+                s_ctx.renderer = NULL;
+                s_ctx.window = NULL;
+                SDL_Quit();
+                return ESP_FAIL;
+            }
+
+            /* Clear the new surface to black */
+            SDL_FillRect(s_ctx.surface, NULL, 0x0000);
+
+            s_ctx.lua_mode = target_lua;
+            s_ctx.expected_w = new_w;
+            s_ctx.expected_h = new_h;
+
+            /* Update input state for new window (1:1 scale) */
+            pthread_mutex_lock(&s_input.mutex);
+            s_input.window_w = new_w;
+            s_input.window_h = new_h;
+            s_input.scale_x = 1.0f;
+            s_input.scale_y = 1.0f;
+            pthread_mutex_unlock(&s_input.mutex);
+
+            ESP_LOGI(TAG, "Window switched to %dx%d (mode=%s)",
+                     new_w, new_h, target_lua ? "lua" : "emote");
+        }
+
+        /* ---- Render current frame (always render when surface exists) ---- */
+        if (s_ctx.texture && s_ctx.surface) {
             SDL_UpdateTexture(s_ctx.texture, NULL,
-                              s_ctx.surface->pixels, s_ctx.width * 2);
+                              s_ctx.surface->pixels, s_ctx.surf_w * 2);
             SDL_RenderClear(s_ctx.renderer);
             SDL_RenderCopy(s_ctx.renderer, s_ctx.texture, NULL, NULL);
             SDL_RenderPresent(s_ctx.renderer);
+        }
+
+        /* Signal any waiting worker thread that the frame was presented */
+        pthread_mutex_lock(&s_present_mutex);
+        if (g_present_pending) {
             g_present_pending = false;
             pthread_cond_broadcast(&s_present_cond);
+        }
+        pthread_mutex_unlock(&s_present_mutex);
+
+        process_sdl_events();
+    } else {
+        /* Worker thread (Lua): if not already in Lua mode, trigger the
+           mode switch BEFORE signaling present.  The Lua drawing is on
+           the emote surface; after the switch the Lua surface is fresh
+           (black), so the script must redraw.  The first frame after
+           the switch will be black — subsequent frames render correctly. */
+        if (!s_ctx.lua_mode) {
+            /* Acquire display arbiter BEFORE the window switch so the
+               emote engine stops drawing immediately.  Without this,
+               emote's flush callback continues rendering onto the Lua
+               surface since the script never called display.init(). */
+            display_arbiter_acquire(DISPLAY_ARBITER_OWNER_LUA);
+
+            s_ctx.pending_switch = true;
+            s_ctx.pending_lua_target = true;
+            /* Wake main loop and wait for it to process the switch */
+            pthread_mutex_lock(&s_present_mutex);
+            g_present_pending = true;
+            pthread_cond_broadcast(&s_present_cond);
+            while (s_ctx.pending_switch) {
+                pthread_cond_wait(&s_present_cond, &s_present_mutex);
+            }
             pthread_mutex_unlock(&s_present_mutex);
         }
 
-        /* Pump events so the window stays responsive */
-        SDL_Event ev;
-        while (SDL_PollEvent(&ev)) {
-            if (ev.type == SDL_QUIT) {
-                ESP_LOGI(TAG, "Window closed by user");
-                g_display_quit_requested = true;
-                return ESP_OK;
-            }
-        }
-    } else {
-        /* Worker thread (Lua): signal that a frame is ready and block
-           until the main loop renders it.  This prevents the Lua script
-           from finishing and releasing the display arbiter before the
-           main loop has had a chance to present the frame. */
+        /* Signal that a frame is ready and block until the main loop
+           renders it. */
         pthread_mutex_lock(&s_present_mutex);
         g_present_pending = true;
         pthread_cond_broadcast(&s_present_cond);
@@ -400,8 +900,8 @@ esp_err_t display_hal_present_rect(int x, int y, int width, int height)
 
     SDL_Rect r = { x, y, width, height };
     SDL_Surface *sub = SDL_CreateRGBSurfaceWithFormatFrom(
-        (uint8_t *)s_ctx.surface->pixels + (y * s_ctx.width + x) * 2,
-        width, height, 16, s_ctx.width * 2, SDL_PIXELFORMAT_RGB565);
+        (uint8_t *)s_ctx.surface->pixels + (y * s_ctx.surf_w + x) * 2,
+        width, height, 16, s_ctx.surf_w * 2, SDL_PIXELFORMAT_RGB565);
     if (!sub) return ESP_ERR_NO_MEM;
     SDL_UpdateTexture(s_ctx.texture, &r, sub->pixels, sub->pitch);
     SDL_RenderClear(s_ctx.renderer);
@@ -409,14 +909,7 @@ esp_err_t display_hal_present_rect(int x, int y, int width, int height)
     SDL_RenderPresent(s_ctx.renderer);
     SDL_FreeSurface(sub);
 
-    SDL_Event ev;
-    while (SDL_PollEvent(&ev)) {
-        if (ev.type == SDL_QUIT) {
-            ESP_LOGI(TAG, "Window closed by user");
-            g_display_quit_requested = true;
-            return ESP_OK;
-        }
-    }
+    process_sdl_events();
     return ESP_OK;
 }
 
@@ -1160,6 +1653,129 @@ esp_err_t display_hal_draw_bitmap_scaled(int x, int y,
     }
     if (out_w) *out_w = dw;
     if (out_h) *out_h = dh;
+    return ESP_OK;
+}
+
+/* ---- Input HAL (display_hal_input.h implementations) ---- */
+
+esp_err_t display_hal_poll_input(void)
+{
+    process_sdl_events();
+    return ESP_OK;
+}
+
+esp_err_t display_hal_get_mouse_state(int16_t *out_x, int16_t *out_y,
+                                       bool *out_left, bool *out_middle,
+                                       bool *out_right, int *out_wheel)
+{
+    if (!out_x || !out_y) return ESP_ERR_INVALID_ARG;
+    pthread_mutex_lock(&s_input.mutex);
+    *out_x = s_input.mouse.x;
+    *out_y = s_input.mouse.y;
+    if (out_left)   *out_left   = s_input.mouse.left;
+    if (out_middle) *out_middle = s_input.mouse.middle;
+    if (out_right)  *out_right  = s_input.mouse.right;
+    if (out_wheel)  *out_wheel  = s_input.mouse.wheel;
+    pthread_mutex_unlock(&s_input.mutex);
+    return ESP_OK;
+}
+
+bool display_hal_is_key_down(int32_t scancode)
+{
+    if (scancode < 0 || scancode >= SDL_NUM_SCANCODES) return false;
+    bool down;
+    pthread_mutex_lock(&s_input.mutex);
+    down = (s_input.keys[scancode] != 0);
+    pthread_mutex_unlock(&s_input.mutex);
+    return down;
+}
+
+uint16_t display_hal_get_modifiers(void)
+{
+    uint16_t mod;
+    pthread_mutex_lock(&s_input.mutex);
+    mod = s_input.modifiers;
+    pthread_mutex_unlock(&s_input.mutex);
+    return mod;
+}
+
+bool display_hal_pop_input_event(input_event_t *out_event)
+{
+    if (!out_event) return false;
+    pthread_mutex_lock(&s_input.mutex);
+    if (s_input.queue_count == 0) {
+        pthread_mutex_unlock(&s_input.mutex);
+        return false;
+    }
+    *out_event = s_input.queue[s_input.queue_head];
+    s_input.queue_head = (s_input.queue_head + 1) % INPUT_EVENT_QUEUE_SIZE;
+    s_input.queue_count--;
+    pthread_mutex_unlock(&s_input.mutex);
+    return true;
+}
+
+/* ---- esp_lcd_touch SDL bridge (makes gfx_touch.c work) ---- */
+
+static esp_lcd_touch_handle_t s_touch_sdl = NULL;
+
+esp_lcd_touch_handle_t esp_lcd_touch_init_sdl(void)
+{
+    if (s_touch_sdl) return s_touch_sdl;
+    s_touch_sdl = calloc(1, sizeof(esp_lcd_touch_dev_t));
+    if (!s_touch_sdl) return NULL;
+    s_touch_sdl->config.int_gpio_num = GPIO_NUM_NC;
+    s_touch_sdl->has_data = false;
+    return s_touch_sdl;
+}
+
+void esp_lcd_touch_feed_sdl(int16_t x, int16_t y, bool pressed)
+{
+    if (!s_touch_sdl) return;
+    s_touch_sdl->last_point.x = x;
+    s_touch_sdl->last_point.y = y;
+    s_touch_sdl->last_point.strength = pressed ? 128 : 0;
+    s_touch_sdl->last_point.track_id = 0;
+    s_touch_sdl->has_data = pressed;
+    if (!pressed) s_touch_sdl->last_read_ms = 0;
+}
+
+esp_err_t esp_lcd_touch_read_data(esp_lcd_touch_handle_t tp)
+{
+    if (!tp) return ESP_ERR_INVALID_ARG;
+    /* Data is pushed from SDL event loop — just mark as read. */
+    tp->last_read_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    return ESP_OK;
+}
+
+esp_err_t esp_lcd_touch_get_data(esp_lcd_touch_handle_t tp,
+    esp_lcd_touch_point_data_t *out, uint8_t *count, uint16_t max)
+{
+    if (!tp || !out || !count) return ESP_ERR_INVALID_ARG;
+    if (max == 0) { *count = 0; return ESP_OK; }
+    if (tp->has_data) {
+        out[0] = tp->last_point;
+        *count = 1;
+    } else {
+        *count = 0;
+    }
+    return ESP_OK;
+}
+
+esp_err_t esp_lcd_touch_register_interrupt_callback(
+    esp_lcd_touch_handle_t tp, void (*cb)(void *))
+{
+    if (!tp) return ESP_ERR_INVALID_ARG;
+    tp->isr_cb = cb;
+    tp->isr_arg = NULL;
+    return ESP_OK;
+}
+
+esp_err_t esp_lcd_touch_register_interrupt_callback_with_data(
+    esp_lcd_touch_handle_t tp, void (*cb)(void *), void *arg)
+{
+    if (!tp) return ESP_ERR_INVALID_ARG;
+    tp->isr_cb = cb;
+    tp->isr_arg = arg;
     return ESP_OK;
 }
 

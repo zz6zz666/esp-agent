@@ -144,8 +144,11 @@ static esp_err_t emote_load_board_display(void)
 
     s_panel_handle = lcd_handles->panel_handle;
     s_io_handle = lcd_handles->io_handle;
-    s_lcd_width = lcd_cfg->lcd_width;
-    s_lcd_height = lcd_cfg->lcd_height;
+    /* Emote engine always renders at the hardware LCD size (320x240),
+       regardless of the virtual display size used by Lua scripts.
+       The board_manager stub may report a different virtual LCD size. */
+    s_lcd_width = 320;
+    s_lcd_height = 240;
     return ESP_OK;
 #endif
 }

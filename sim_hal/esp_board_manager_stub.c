@@ -16,8 +16,8 @@ static dev_display_lcd_handles_t s_lcd_handles = {
 };
 
 static dev_display_lcd_config_t s_lcd_config = {
-    .lcd_width  = 320,
-    .lcd_height = 240,
+    .lcd_width  = 480,
+    .lcd_height = 480,
     .sub_type   = "io",
 };
 
