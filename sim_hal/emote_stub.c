@@ -22,6 +22,9 @@
 #include "gfx.h"
 #include "display_arbiter.h"
 #include "display_hal.h"
+#include "esp_lcd_touch.h"
+#include "core/gfx_touch.h"
+#include "emote_defs.h"
 
 #if defined(PLATFORM_WINDOWS)
 # include "platform.h"
@@ -31,6 +34,26 @@
 extern void display_hal_mark_frame_ready(void);
 
 static const char *TAG = "app_emote";
+
+/* Forward declarations */
+static emote_handle_t s_emote_handle;
+static bool s_touch_enabled = true;
+
+static void sim_touch_event_cb(gfx_touch_t *touch,
+                                const gfx_touch_event_t *event,
+                                void *user_data)
+{
+    (void)touch;
+    (void)user_data;
+    if (!s_emote_handle || !s_touch_enabled) return;
+
+    if (event->type == GFX_TOUCH_EVENT_PRESS) {
+        /* Play "offline" animation once (76 frames @ 20 fps = 3.8 s),
+         * then auto-restore "swim" idle. */
+        emote_insert_anim_dialog(s_emote_handle, "offline", 3800);
+        ESP_LOGI(TAG, "touch tap: playing 'offline' dialog (3.8s)");
+    }
+}
 
 /* Try installed path first, fall back to dev-relative path */
 #if defined(PLATFORM_WINDOWS)
@@ -272,6 +295,27 @@ static esp_err_t emote_init_internal(void)
     /* Acquire EMOTE ownership — this is the default owner (display_arbiter starts
        with EMOTE as default, but we explicitly acquire to be safe). */
     display_arbiter_acquire(DISPLAY_ARBITER_OWNER_EMOTE);
+
+    /* Wire SDL mouse → emote touch: register the SDL touch bridge with
+     * the gfx engine so that mouse clicks trigger animation reactions. */
+    {
+        esp_lcd_touch_handle_t touch_h = esp_lcd_touch_init_sdl();
+        if (touch_h) {
+            gfx_touch_config_t tcfg = {
+                .handle = touch_h,
+                .event_cb = sim_touch_event_cb,
+                .poll_ms = 30,
+                .disp = s_emote_handle->gfx_disp,
+                .user_data = NULL,
+            };
+            gfx_touch_t *t = gfx_touch_add(s_emote_handle->gfx_handle, &tcfg);
+            if (t) {
+                ESP_LOGI(TAG, "SDL touch bridge wired: poll=%dms", 30);
+            } else {
+                ESP_LOGW(TAG, "gfx_touch_add failed — emote won't react to clicks");
+            }
+        }
+    }
 
     return emote_set_network_status(true, NULL);
 }

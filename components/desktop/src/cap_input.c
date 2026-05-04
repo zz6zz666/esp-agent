@@ -77,24 +77,13 @@ static esp_err_t get_input_state_exec(const char *input_json,
     cJSON_AddBoolToObject(mod_obj, "super", (mod & 0x0C00) != 0);
     cJSON_AddItemToObject(root, "modifiers", mod_obj);
 
-    /* Pressed keys (list of scancode strings for known keys) */
+    /* Pressed keys — iterate all scancodes and report active ones */
     cJSON *keys_arr = cJSON_CreateArray();
-    /* Report a sampling of commonly-interesting keys */
-    static const struct {
-        int sc; const char *name;
-    } watch_keys[] = {
-        { 4,  "a" }, { 5,  "b" }, { 6,  "c" }, { 7,  "d" }, { 8,  "e" },
-        { 40, "enter" }, { 41, "escape" }, { 42, "backspace" },
-        { 43, "tab" }, { 44, "space" },
-        { 79, "right" }, { 80, "left" }, { 81, "down" }, { 82, "up" },
-        { 225, "lctrl" }, { 229, "lshift" }, { 226, "lalt" },
-    };
-    int n_keys = sizeof(watch_keys) / sizeof(watch_keys[0]);
-    for (int i = 0; i < n_keys; i++) {
-        if (display_hal_is_key_down(watch_keys[i].sc)) {
-            cJSON_AddItemToArray(keys_arr,
-                cJSON_CreateString(watch_keys[i].name));
-        }
+    for (int sc = 0; sc < 512; sc++) {
+        if (!display_hal_is_key_down(sc)) continue;
+        const char *name = display_hal_get_scancode_name(sc);
+        if (!name || !name[0] || name[0] == '?') continue;
+        cJSON_AddItemToArray(keys_arr, cJSON_CreateString(name));
     }
     cJSON_AddItemToObject(root, "keys_down", keys_arr);
 
@@ -156,6 +145,7 @@ static esp_err_t wait_input_exec(const char *input_json,
     cJSON_AddNumberToObject(root, "x", evt.x);
     cJSON_AddNumberToObject(root, "y", evt.y);
     cJSON_AddNumberToObject(root, "key", evt.key);
+    cJSON_AddStringToObject(root, "key_name", display_hal_get_scancode_name(evt.key));
     cJSON_AddNumberToObject(root, "button", evt.button);
     cJSON_AddBoolToObject(root, "ctrl",  (evt.mod & 0x00C0) != 0);
     cJSON_AddBoolToObject(root, "shift", (evt.mod & 0x0003) != 0);
