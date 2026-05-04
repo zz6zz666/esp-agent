@@ -212,6 +212,8 @@ esp_err_t claw_llm_http_post_json(const claw_llm_http_json_request_t *request,
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "esp-claw-desktop/1.0");
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
 
     ESP_LOGD(TAG, "POST %s", request->url);
     rc = curl_easy_perform(curl);

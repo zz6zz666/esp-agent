@@ -55,7 +55,17 @@ static inline int _mingw_mkdir(const char *path, int mode)
 /* ---- localtime_r → localtime_s ---- */
 #ifndef localtime_r
 #define localtime_r(timer, result) \
-    localtime_s((result), (const time_t *)(timer))
+    (localtime_s((result), (const time_t *)(timer)) == 0 ? (result) : NULL)
+#endif
+
+/* ---- strftime → _mingw_strftime_utf8 (ACP→UTF-8 on Windows) ---- */
+#if defined(PLATFORM_WINDOWS)
+# include <time.h>
+size_t __cdecl _mingw_strftime_utf8(char * __restrict__ buf, size_t maxsize,
+                                     const char * __restrict__ format,
+                                     const struct tm * __restrict__ tm);
+# define strftime(buf, maxsize, format, tm) \
+    _mingw_strftime_utf8(buf, maxsize, format, tm)
 #endif
 
 /* ---- asprintf (GNU) ---- */

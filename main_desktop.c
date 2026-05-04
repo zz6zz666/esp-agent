@@ -477,8 +477,8 @@ static void print_usage(const char *prog)
 int main(int argc, char **argv)
 {
 #if defined(PLATFORM_WINDOWS)
-    SetConsoleOutputCP(CP_UTF8);
     SetProcessDPIAware();
+    SetConsoleOutputCP(CP_UTF8);
     /* Enable ANSI escape codes on Windows 10+ */
     {
         HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -692,13 +692,15 @@ int main(int argc, char **argv)
 
     /* Parse config.json */
     {
-        FILE *fp = fopen(config_path, "r");
+        FILE *fp = fopen(config_path, "rb");
         if (fp) {
             fseek(fp, 0, SEEK_END);
             long sz = ftell(fp);
             rewind(fp);
             char *buf = calloc(1, (size_t)sz + 1);
-            if (buf && fread(buf, 1, (size_t)sz, fp) == (size_t)sz) {
+            size_t nread = buf ? fread(buf, 1, (size_t)sz, fp) : 0;
+            if (buf && nread > 0) {
+                buf[nread] = '\0';
                 cJSON *root = cJSON_Parse(buf);
                 if (root) {
                     /* LLM section */

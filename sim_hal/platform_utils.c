@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #if defined(PLATFORM_WINDOWS)
 # define WIN32_LEAN_AND_MEAN
@@ -158,3 +159,43 @@ int platform_write_pid_file(const char *path)
     fclose(fp);
     return 0;
 }
+
+/* ---- strftime with ACP→UTF-8 conversion (Windows) ---- */
+#if defined(PLATFORM_WINDOWS)
+#include <wchar.h>
+
+size_t _mingw_strftime_utf8(char *buf, size_t maxsize, const char *format, const struct tm *tm)
+{
+    char tmp[256];
+    size_t n;
+#ifdef strftime
+# pragma push_macro("strftime")
+# undef strftime
+    n = strftime(tmp, sizeof(tmp), format, tm);
+# pragma pop_macro("strftime")
+#else
+    n = strftime(tmp, sizeof(tmp), format, tm);
+#endif
+    if (n == 0 || n >= maxsize) {
+        if (n > 0 && n < maxsize) { memcpy(buf, tmp, n); buf[n] = '\0'; }
+        return n;
+    }
+
+    /* On Windows, strftime with %Z outputs locale-encoded timezone name
+     * (GBK on Chinese systems). Convert ACP → UTF-8 for LLM compatibility. */
+    wchar_t wbuf[256];
+    int wlen = MultiByteToWideChar(CP_ACP, MB_ERR_INVALID_CHARS, tmp, (int)n, wbuf, 256);
+    if (wlen <= 0) {
+        /* Pure ASCII (or conversion failed) — no conversion needed */
+        memcpy(buf, tmp, n); buf[n] = '\0';
+        return n;
+    }
+    int ulen = WideCharToMultiByte(CP_UTF8, 0, wbuf, wlen, buf, (int)maxsize - 1, NULL, NULL);
+    if (ulen <= 0) {
+        memcpy(buf, tmp, n); buf[n] = '\0';
+        return n;
+    }
+    buf[ulen] = '\0';
+    return (size_t)ulen;
+}
+#endif  /* PLATFORM_WINDOWS */
