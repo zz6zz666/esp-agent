@@ -16,7 +16,6 @@ AppUpdatesURL={#MyAppURL}
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
-LicenseFile=..\LICENSE
 OutputDir=.
 OutputBaseFilename=esp-agent-setup-{#MyAppVersion}
 Compression=lzma2
@@ -29,7 +28,6 @@ UninstallDisplayIcon={app}\{#MyAppExeName}
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
-Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: checkedonce
@@ -82,6 +80,17 @@ Source: "C:\msys64\mingw64\bin\libgcc_s_seh-1.dll"; DestDir: "{app}"; Flags: ign
 
 ; zlib (transitive dep of many libraries)
 Source: "C:\msys64\mingw64\bin\zlib1.dll"; DestDir: "{app}"; Flags: ignoreversion
+
+; bzip2 (transitive dep of freetype)
+Source: "C:\msys64\mingw64\bin\libbz2-1.dll"; DestDir: "{app}"; Flags: ignoreversion
+
+; GCC C++ runtime (needed by some C libraries)
+Source: "C:\msys64\mingw64\bin\libstdc++-6.dll"; DestDir: "{app}"; Flags: ignoreversion
+
+; libcurl HTTP/3 & QUIC transitive deps
+Source: "C:\msys64\mingw64\bin\libnghttp3-9.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "C:\msys64\mingw64\bin\libngtcp2-16.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "C:\msys64\mingw64\bin\libngtcp2_crypto_ossl-0.dll"; DestDir: "{app}"; Flags: ignoreversion
 
 ; Optional: fonts directory alongside the exe
 ; (DejaVuSans.ttf, NotoColorEmoji.ttf, etc.)

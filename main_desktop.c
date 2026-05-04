@@ -465,6 +465,7 @@ static void print_usage(const char *prog)
 int main(int argc, char **argv)
 {
 #if defined(PLATFORM_WINDOWS)
+    SetConsoleOutputCP(CP_UTF8);
     SetConsoleCtrlHandler(win_ctrl_handler, TRUE);
     signal(SIGINT, sig_handler);
     signal(SIGTERM, sig_handler);

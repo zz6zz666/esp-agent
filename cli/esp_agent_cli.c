@@ -715,6 +715,8 @@ static int cmd_help(int argc, char **argv)
 int main(int argc, char **argv)
 {
 #if defined(_WIN32)
+    /* Enable UTF-8 output on Windows console */
+    SetConsoleOutputCP(CP_UTF8);
     /* Enable ANSI escape codes on Windows 10+ */
     HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
     DWORD dwMode = 0;
