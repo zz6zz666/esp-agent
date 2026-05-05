@@ -6,7 +6,7 @@ Cross-platform (Linux + Windows) desktop test environment for the `esp-claw` emb
 
 - `esp-claw/` — upstream repo (read-only reference, do not modify)
 - `sim_hal/` — our independent simulator layer (ESP-IDF/FreeRTOS stubs for desktop)
-- `cli/` — cross-platform CLI management tool (`esp-agent.exe` / `esp-agent`)
+- `cli/` — cross-platform CLI management tool (`crush-claw.exe` / `crush-claw`)
 - `report.md` — full architecture reference of the upstream codebase
 
 ## Quick Start
@@ -15,11 +15,11 @@ Cross-platform (Linux + Windows) desktop test environment for the `esp-claw` emb
 
 ```bash
 # First time
-./esp-agent config     # Full setup wizard (LLM, channels, search, display)
-./esp-agent build      # Compile the binary
-./esp-agent start      # Start the agent (background daemon)
-./esp-agent ask "Hello"  # Send a prompt to the agent
-./esp-agent stop       # Shut down
+./crush-claw config     # Full setup wizard (LLM, channels, search, display)
+./crush-claw build      # Compile the binary
+./crush-claw start      # Start the agent (background daemon)
+./crush-claw ask "Hello"  # Send a prompt to the agent
+./crush-claw stop       # Shut down
 
 # Or run in foreground for development:
 ./_run_desktop.sh run
@@ -29,17 +29,17 @@ Cross-platform (Linux + Windows) desktop test environment for the `esp-claw` emb
 
 ```cmd
 REM First time
-esp-agent.exe config     REM Full setup wizard (LLM, channels, search, display)
-esp-agent.exe build      REM Compile the binary
-esp-agent.exe start      REM Start the agent (detached background process)
-esp-agent.exe ask "Hello"  REM Send a prompt to the agent
-esp-agent.exe stop       REM Shut down
+crush-claw.exe config     REM Full setup wizard (LLM, channels, search, display)
+crush-claw.exe build      REM Compile the binary
+crush-claw.exe start      REM Start the agent (detached background process)
+crush-claw.exe ask "Hello"  REM Send a prompt to the agent
+crush-claw.exe stop       REM Shut down
 
 REM Or run in foreground for development:
 _run_desktop.bat run
 ```
 
-## CLI Tool (`./esp-agent`)
+## CLI Tool (`./crush-claw`)
 
 ### Management commands (handled locally)
 
@@ -57,27 +57,27 @@ _run_desktop.bat run
 
 ### Agent commands (forwarded to REPL)
 
-`esp-agent --help` shows management commands, then appends the REPL's
-own `help` output.  `esp-agent esp-claw help` shows only the REPL help.
+`crush-claw --help` shows management commands, then appends the REPL's
+own `help` output.  `crush-claw esp-claw help` shows only the REPL help.
 
 Every command not in the management table above is forwarded directly to
 the agent's built-in CLI via IPC — Unix socket on Linux, Named Pipe on
 Windows (one-shot request/response).
 Examples:
 
-- `esp-agent ask "Hello"` — multi-turn prompt
-- `esp-agent session` — show/switch session
-- `esp-agent display on|off|status` — SDL2 window control
-- `esp-agent lua --list` — list Lua scripts
-- `esp-agent cap list` — list capabilities
-- `esp-agent hello` → REPL returns "Unknown command: hello"
+- `crush-claw ask "Hello"` — multi-turn prompt
+- `crush-claw session` — show/switch session
+- `crush-claw display on|off|status` — SDL2 window control
+- `crush-claw lua --list` — list Lua scripts
+- `crush-claw cap list` — list capabilities
+- `crush-claw hello` → REPL returns "Unknown command: hello"
 
 ## Data Directory
 
-Linux: `~/.esp-agent/` · Windows: `%USERPROFILE%\.esp-agent\`
+Linux: `~/.crush-claw/` · Windows: `%USERPROFILE%\.crush-claw\`
 
 ```
-.esp-agent/
+.crush-claw/
 ├── config.json              # LLM, channels, search keys, display
 ├── agent.sock               # Unix domain socket (Linux) / Named Pipe (Windows)
 ├── agent.pid                # Process ID (running)
@@ -310,8 +310,8 @@ make -j$(nproc)          # Linux
 ### Release build
 
 ```bash
-./esp-agent build           # Linux
-# or: esp-agent.exe build   # Windows
+./crush-claw build           # Linux
+# or: crush-claw.exe build   # Windows
 ```
 
 ## CONFIG defines (CMakeLists.txt)
@@ -372,7 +372,7 @@ All 19 capability groups register (~72 capabilities), CLI REPL serves 14 command
 [I] [app_capabilities] Register session manager cap ok (groups=18, caps=72)
 [I] [cap_mcp_srv] MCP server ready: http://esp-claw.local:18791/mcp_server
 [I] [desktop_main] cap_cli registered with 8 allowed commands (group 19)
-[I] [console_unix] IPC ready at ~/.esp-agent/agent.sock (Unix socket / Named Pipe)
+[I] [console_unix] IPC ready at ~/.crush-claw/agent.sock (Unix socket / Named Pipe)
 ```
 
 Real host data passthrough (platform-adapted):
@@ -387,13 +387,13 @@ The `cap call <name> <json>` command parses its third argument as JSON. Always p
 
 ```bash
 # Capabilities without arguments — pass empty object
-esp-agent 'cap call get_system_info {}'
-esp-agent 'cap call get_ip_address {}'
-esp-agent 'cap call get_memory_info {}'
-esp-agent 'cap call memory_list {}'
+crush-claw 'cap call get_system_info {}'
+crush-claw 'cap call get_ip_address {}'
+crush-claw 'cap call get_memory_info {}'
+crush-claw 'cap call memory_list {}'
 
 # Capabilities with arguments — pass real JSON
-esp-agent 'cap call scheduler_add {"cron":"0 */2 * * *","action":"..."}'
+crush-claw 'cap call scheduler_add {"cron":"0 */2 * * *","action":"..."}'
 ```
 
 Note: wrap the full command in single quotes to prevent shell expansion of `{}` and preserve the JSON string exactly.
@@ -408,9 +408,9 @@ Note: wrap the full command in single quotes to prevent shell expansion of `{}` 
 - [X] Skills init (3 skills loaded, auto-created on first run)
 - [X] All 19 capability groups registered (~72 capabilities)
 - [X] Unix socket CLI (help, ask, cap, auto, lua, event_router, skill, session)
-- [X] esp-agent CLI tool (config/start/stop/status/logs/ask/display/build/clean)
+- [X] crush-claw CLI tool (config/start/stop/status/logs/ask/display/build/clean)
 - [X] config.json read + env var overrides
-- [X] Auto-create ~/.esp-agent/ on first run
+- [X] Auto-create ~/.crush-claw/ on first run
 - [X] LLM API call (set api_key + model in config.json)
 - [X] Real host data: CPU model/cores/usage, memory, IP/netmask/gateway, uptime
 - [X] Real WiFi detection (/proc/net/wireless, reports "disconnected" on WSL2)
@@ -426,4 +426,4 @@ Note: wrap the full command in single quotes to prevent shell expansion of `{}` 
 - [ ] Windows daemon (detached process)
 - [ ] Windows font loading from exe_dir/fonts/
 - [ ] Windows real host data (GetSystemInfo, GlobalMemoryStatusEx, GetAdaptersAddresses)
-- [ ] esp-agent.exe CLI tool (config/start/stop/status/logs/build/clean)
+- [ ] crush-claw.exe CLI tool (config/start/stop/status/logs/build/clean)

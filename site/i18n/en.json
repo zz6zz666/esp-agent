@@ -61,7 +61,7 @@
     "step4": "Send <code>config.json</code> to your partner / crush.",
     "client_intro": "After receiving the file, your partner / crush:",
     "client_step1": "Copies <code>config.json</code> into the <code>~/.crush-claw</code> directory, replacing the existing file (Windows: <code>C:\\Users\\user\\.crush-claw</code>).",
-    "client_step2": "Runs <code>esp-agent restart</code> in the terminal to restart.",
+    "client_step2": "Runs <code>crush-claw restart</code> in the terminal to restart.",
     "trust_title": "Trust & Security Reminder",
     "trust_desc": "Your LLM API Key will be stored on your partner's computer. Both parties need mutual trust: you should not exploit Lua scripts to attack their computer, and they should not steal your key. If concerned about security, you can also ask your partner to register their own LLM API key.",
     "config_title": "Configuration Template",

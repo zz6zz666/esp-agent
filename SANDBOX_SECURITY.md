@@ -1,6 +1,6 @@
-# esp-agent Lua 沙箱安全白皮书
+# Crush Claw Lua 沙箱安全白皮书
 
-> 本文档详细说明 esp-agent 桌面模拟器中 Lua 脚本引擎的安全沙箱设计。
+> 本文档详细说明 Crush Claw 桌面模拟器中 Lua 脚本引擎的安全沙箱设计。
 > 适用版本：esp-claw-desktop Simulator
 > 最后更新：2026-05-05
 
@@ -26,7 +26,7 @@
 
 ## 1. 概述
 
-esp-agent 是一款 AI 桌面宠物产品 —— 用户在电脑上运行一个可爱的 esp-claw agent，
+Crush Claw 是一款 AI 桌面宠物产品 —— 用户在电脑上运行一个可爱的 esp-claw agent，
 可以通过远程 AI 对话控制其在模拟 LCD 屏幕上绘制图形、展示动画、进行趣味互动。
 
 **核心安全风险**：Agent 的 Lua 脚本引擎可以被 LLM（大语言模型）用来生成并执行 Lua
@@ -205,7 +205,7 @@ static bool path_is_safe(const char *path)
     // 1. 必须是绝对路径
     if (path[0] != '/') return false;
 
-    // 2. 必须以 ~/.esp-agent/ 开头 (base_dir)
+    // 2. 必须以 ~/.crush-claw/ 开头 (base_dir)
     if (strncmp(path, base_dir, base_len) != 0) return false;
 
     // 3. 不能包含 .. 目录穿越
@@ -455,10 +455,9 @@ print(system.date("%Y-%m-%d"))
 
 ```bash
 # 应拒绝并输出错误
-esp-agent "lua --run builtin_sandbox_test"   # 测试脚本需存在
+crush-claw "lua --run builtin_sandbox_test"   # 测试脚本需存在
 
-# 或直接在 Lua 中测试:
-esp-agent ask '运行 Lua 脚本: os.execute("echo hello")'
+crush-claw ask '运行 Lua 脚本: os.execute("echo hello")'
 # 应输出类似 "attempt to index a nil value (global 'os')"
 ```
 

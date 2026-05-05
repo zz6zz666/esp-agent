@@ -2,8 +2,8 @@
  * console_unix.c — esp_console over Unix socket / Windows Named Pipe
  *
  * Replaces ESP-IDF's UART/USB console transport.
- *   Linux:   Unix domain socket at ~/.esp-agent/agent.sock
- *   Windows: Named Pipe at \\.\pipe\esp-agent
+ *   Linux:   Unix domain socket at ~/.crush-claw/agent.sock
+ *   Windows: Named Pipe at \\.\pipe\crush-claw
  *
  * Non-interactive one-shot RPC: one command per connection.
  */
@@ -42,7 +42,7 @@ static bool              s_help_registered;
 
 /* ---- transport state ---- */
 #if defined(PLATFORM_WINDOWS)
-# define PIPE_NAME_STR  "\\\\.\\pipe\\esp-agent"
+# define PIPE_NAME_STR  "\\\\.\\pipe\\crush-claw"
 static HANDLE      s_pipe_handle = INVALID_HANDLE_VALUE;
 #else
 static char        s_sock_path[256];
@@ -59,7 +59,7 @@ static volatile bool s_accept_running;
 
 static void resolve_data_dir(char *buf, size_t size)
 {
-    const char *data_dir = getenv("ESP_AGENT_DATA_DIR");
+    const char *data_dir = getenv("CRUSH_CLAW_DATA_DIR");
     if (data_dir) {
         strncpy(buf, data_dir, size - 1);
         buf[size - 1] = '\0';
@@ -67,7 +67,7 @@ static void resolve_data_dir(char *buf, size_t size)
     }
     const char *home = getenv("USERPROFILE");
     if (!home) home = getenv("HOMEDRIVE");
-    snprintf(buf, size, "%s\\.esp-agent", home ? home : ".");
+    snprintf(buf, size, "%s\\.crush-claw", home ? home : ".");
 }
 
 static void ensure_parent_dir(const char *path)
@@ -93,14 +93,14 @@ static void resolve_default_socket_path(const char *hint)
         strncpy(s_sock_path, hint, sizeof(s_sock_path) - 1);
         return;
     }
-    const char *data_dir = getenv("ESP_AGENT_DATA_DIR");
+    const char *data_dir = getenv("CRUSH_CLAW_DATA_DIR");
     if (data_dir) {
         snprintf(s_sock_path, sizeof(s_sock_path), "%s/agent.sock", data_dir);
         return;
     }
     const char *home = getenv("HOME");
     snprintf(s_sock_path, sizeof(s_sock_path),
-             "%s/.esp-agent/agent.sock", home ? home : "/tmp");
+             "%s/.crush-claw/agent.sock", home ? home : "/tmp");
 }
 
 static void ensure_parent_dir(const char *path)

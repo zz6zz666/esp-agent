@@ -1,20 +1,20 @@
 #!/bin/sh
-# postinst — esp-agent Debian package post-installation script
+# postinst — Crush Claw Debian package post-installation script
 
 set -e
 
 echo ""
-echo "=== esp-agent has been installed ==="
+echo "=== Crush Claw has been installed ==="
 echo ""
 echo "Quick start:"
-echo "  1. Run 'esp-agent config' to set up your LLM keys"
-echo "  2. Run 'esp-agent start' to launch the agent"
-echo "  3. Run 'esp-agent ask \"Hello\"' to interact with the agent"
+echo "  1. Run 'crush-claw config' to set up your LLM keys"
+echo "  2. Run 'crush-claw start' to launch the agent"
+echo "  3. Run 'crush-claw ask \"Hello\"' to interact with the agent"
 echo ""
 echo "Systemd user service (auto-start on login):"
-echo "  esp-agent service enable"
+echo "  crush-claw service enable"
 echo ""
-echo "Data is stored in ~/.esp-agent/ (created on first run)."
+echo "Data is stored in ~/.crush-claw/ (created on first run)."
 echo ""
 
 #DEBHELPER#

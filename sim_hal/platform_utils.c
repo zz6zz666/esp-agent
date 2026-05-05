@@ -27,7 +27,7 @@
 
 void platform_get_data_dir(char *buf, size_t size)
 {
-    const char *env = getenv("ESP_AGENT_DATA_DIR");
+    const char *env = getenv("CRUSH_CLAW_DATA_DIR");
     if (env && env[0]) {
         strncpy(buf, env, size - 1);
         buf[size - 1] = '\0';
@@ -46,11 +46,11 @@ void platform_get_data_dir(char *buf, size_t size)
             home = "C:\\";
         }
     }
-    snprintf(buf, size, "%s\\.esp-agent", home);
+    snprintf(buf, size, "%s\\.crush-claw", home);
 #else
     const char *home = getenv("HOME");
     if (!home) home = "/tmp";
-    snprintf(buf, size, "%s/.esp-agent", home);
+    snprintf(buf, size, "%s/.crush-claw", home);
 #endif
 }
 

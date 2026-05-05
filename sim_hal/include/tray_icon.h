@@ -1,5 +1,5 @@
 /*
- * tray_icon.h — Windows system tray icon for esp-agent
+ * tray_icon.h — Windows system tray icon for Crush Claw
  */
 #pragma once
 #include <stdbool.h>

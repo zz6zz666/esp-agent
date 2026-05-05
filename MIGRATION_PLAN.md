@@ -2,7 +2,7 @@
 
 ## 概述
 
-将 esp-agent 从 Linux 桌面模拟器迁移到 Windows。当前代码大量依赖 POSIX/Linux 特定 API（`/proc` 文件系统、Unix domain socket、`pthread`、`sysconf`、`getifaddrs` 等），需要替换为 Windows API。
+将 crush-claw 从 Linux 桌面模拟器迁移到 Windows。当前代码大量依赖 POSIX/Linux 特定 API（`/proc` 文件系统、Unix domain socket、`pthread`、`sysconf`、`getifaddrs` 等），需要替换为 Windows API。
 
 ## 架构决策
 
@@ -14,9 +14,9 @@
 
 ### IPC 方案：Windows Named Pipes 替代 Unix Domain Socket
 - `console_unix.c` → `console_win.c`（或 `#ifdef _WIN32` 条件编译）
-- Named Pipe 路径：`\\.\pipe\esp-agent` 替代 `~/.esp-agent/agent.sock`
+- Named Pipe 路径：`\\.\pipe\crush-claw` 替代 `~/.crush-claw/agent.sock`
 
-### CLI 工具：C 语言编译（`esp-agent.exe`）
+### CLI 工具：C 语言编译（`crush-claw.exe`）
 - 编译为独立 .exe，作为守护进程的管理客户端
 - 通过 Named Pipe 与守护进程通信
 - 替代原 Bash 脚本的 config/start/stop/status/logs/build/ask 子命令
@@ -30,7 +30,7 @@
 - 100% 可控，不需要用户安装额外字体
 
 ### 数据目录
-- `~/.esp-agent/` → `%USERPROFILE%\.esp-agent\`（即 `C:\Users\<user>\.esp-agent\`）
+- `~/.crush-claw/` → `%USERPROFILE%\.crush-claw\`（即 `C:\Users\<user>\.crush-claw\`）
 
 ---
 
@@ -83,7 +83,7 @@ sim_hal/include/platform/
 | 休眠 | `usleep` | `Sleep` |
 | 时间戳 | `clock_gettime(CLOCK_MONOTONIC)` | `QueryPerformanceCounter` |
 | 主目录 | `getenv("HOME")` | `getenv("USERPROFILE")` |
-| 数据目录 | `~/.esp-agent/` | `%USERPROFILE%\.esp-agent\` |
+| 数据目录 | `~/.crush-claw/` | `%USERPROFILE%\.crush-claw\` |
 | 创建目录 | `mkdir(path, 0755)` | `_mkdir(path)` / `CreateDirectoryA` |
 | 删除文件 | `unlink()` | `DeleteFileA()` |
 | 路径分隔符 | `/` | `\`（内部统一使用 `/`，Windows API 也接受） |
@@ -120,14 +120,14 @@ sim_hal/include/platform/
 ```c
 // POSIX：socket(AF_UNIX, SOCK_STREAM, 0) + bind + listen + accept
 // Windows Named Pipe：
-// CreateNamedPipe("\\.\pipe\esp-agent", PIPE_ACCESS_DUPLEX, ...)
+// CreateNamedPipe("\\.\pipe\crush-claw", PIPE_ACCESS_DUPLEX, ...)
 // ConnectNamedPipe()
-// 客户端用 CreateFile("\\.\pipe\esp-agent", ...) + WriteFile + ReadFile
+// 客户端用 CreateFile("\\.\pipe\crush-claw", ...) + WriteFile + ReadFile
 ```
 
 One-shot 模式保持不变：读取一行命令 → 执行 → 返回结果 → 断开。
 
-客户端 CLI (esp-agent CLI) 通过 `CreateFile` + `WriteFile` + `ReadFile` 与 daemon 通信。
+客户端 CLI (crush-claw CLI) 通过 `CreateFile` + `WriteFile` + `ReadFile` 与 daemon 通信。
 
 ---
 
@@ -251,9 +251,9 @@ One-shot 模式保持不变：读取一行命令 → 执行 → 返回结果 →
 
 ---
 
-### 第 10 步：`esp-agent` CLI 工具 — C 语言重写
+### 第 10 步：`crush-claw` CLI 工具 — C 语言重写
 
-**新文件：`cli/esp_agent_cli.c`**（编译为 `esp-agent.exe`）
+**新文件：`cli/crush_claw_cli.c`**（编译为 `crush-claw.exe`）
 
 作为一个独立的 CMake 目标构建，与守护进程共享 Named Pipe 通信协议。
 
@@ -261,7 +261,7 @@ One-shot 模式保持不变：读取一行命令 → 执行 → 返回结果 →
 
 | 命令 | C 实现 |
 |------|--------|
-| `config` | 交互式配置向导（stdin/stdout），读写 `%USERPROFILE%\\.esp-agent\\config.json` |
+| `config` | 交互式配置向导（stdin/stdout），读写 `%USERPROFILE%\\.crush-claw\\config.json` |
 | `start` | `CreateProcess(DETACHED_PROCESS, esp-claw-desktop.exe --daemon --pid-file ...)` |
 | `stop` | 通过 Named Pipe 发送 shutdown 命令，或 `OpenProcess` + `TerminateProcess`（读 PID 文件） |
 | `restart` | stop + start |
@@ -274,7 +274,7 @@ One-shot 模式保持不变：读取一行命令 → 执行 → 返回结果 →
 
 Client 通信方式（Named Pipe）：
 ```c
-HANDLE hPipe = CreateFileA("\\\\.\\pipe\\esp-agent",
+HANDLE hPipe = CreateFileA("\\\\.\\pipe\\crush-claw",
     GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL);
 WriteFile(hPipe, cmdline, strlen(cmdline), &written, NULL);
 // shutdown write end to signal EOF
@@ -284,15 +284,15 @@ CloseHandle(hPipe);
 
 CMake 中新增构建目标：
 ```cmake
-add_executable(esp-agent cli/esp_agent_cli.c)
-set_target_properties(esp-agent PROPERTIES SUFFIX ".exe")
-target_link_libraries(esp-agent PRIVATE ws2_32)
+add_executable(crush-claw cli/crush_claw_cli.c)
+set_target_properties(crush-claw PROPERTIES SUFFIX ".exe")
+target_link_libraries(crush-claw PRIVATE ws2_32)
 ```
 
-保留兼容批处理包装 `esp-agent.bat`（主要用于从 MSYS2 终端调用时处理路径）：
+保留兼容批处理包装 `crush-claw.bat`（主要用于从 MSYS2 终端调用时处理路径）：
 ```batch
 @echo off
-"%~dp0esp-agent.exe" %*
+"%~dp0crush-claw.exe" %*
 ```
 
 ---
@@ -314,7 +314,7 @@ target_link_libraries(esp-agent PRIVATE ws2_32)
 ### 第 12 步：打包脚本
 
 `package.sh` 重写为 `package.bat`：
-- 收集构建产物（`esp-claw-desktop.exe`、`esp-agent.exe`、依赖 DLL）
+- 收集构建产物（`esp-claw-desktop.exe`、`crush-claw.exe`、依赖 DLL）
 - 使用 `Compress-Archive`（PowerShell）或 `7z` 打包为 ZIP
 - MSYS2 环境下可选保留 shell 版本 `package.sh`
 
@@ -364,7 +364,7 @@ target_link_libraries(esp-agent PRIVATE ws2_32)
 13. `display_sdl2.c`（SDL2 + 字体路径）
 14. `main_desktop.c`（信号、守护进程、路径）
 15. 其余 sim_hal 文件（emote_stub, esp_mmap_assets_stub, http_curl 等）
-16. CLI 工具 `cli/esp_agent_cli.c`（编译为 esp-agent.exe）
+16. CLI 工具 `cli/crush_claw_cli.c`（编译为 crush-claw.exe）
 17. `_run_desktop.bat` 启动脚本
 18. `package.bat` 打包脚本
 19. 文档更新（CLAUDE.md, README.md 等）

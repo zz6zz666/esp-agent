@@ -1,43 +1,43 @@
 #!/usr/bin/env bash
 #
-# esp-agent — CLI tool for the esp-claw desktop agent
+# crush-claw — CLI tool for the esp-claw desktop agent
 #
 # Management commands (handled locally):
-#   esp-agent config             First-time setup wizard
-#   esp-agent start              Start the agent service (daemon mode, auto-tails logs)
-#   esp-agent stop               Stop the agent service
-#   esp-agent restart            Stop then start the agent service
-#   esp-agent status             Check if the agent is running
-#   esp-agent logs               Tail the agent log file
-#   esp-agent service enable     Enable systemd user service
-#   esp-agent service disable    Disable systemd user service
-#   esp-agent service start      Start via systemd
-#   esp-agent service stop       Stop via systemd
-#   esp-agent service status     Status via systemd
-#   esp-agent build              Build the agent binary
-#   esp-agent clean              Remove build artifacts
-#   esp-agent --version          Print version
+#   crush-claw config             First-time setup wizard
+#   crush-claw start              Start the agent service (daemon mode, auto-tails logs)
+#   crush-claw stop               Stop the agent service
+#   crush-claw restart            Stop then start the agent service
+#   crush-claw status             Check if the agent is running
+#   crush-claw logs               Tail the agent log file
+#   crush-claw service enable     Enable systemd user service
+#   crush-claw service disable    Disable systemd user service
+#   crush-claw service start      Start via systemd
+#   crush-claw service stop       Stop via systemd
+#   crush-claw service status     Status via systemd
+#   crush-claw build              Build the agent binary
+#   crush-claw clean              Remove build artifacts
+#   crush-claw --version          Print version
 #
 # Explicit REPL passthrough:
-#   esp-agent esp-claw <cmd...>  Forward <cmd...> to the agent REPL
+#   crush-claw esp-claw <cmd...>  Forward <cmd...> to the agent REPL
 #
 # Everything else is forwarded directly to the agent's built-in CLI
 # over the Unix socket.  Examples:
-#   esp-agent ask "Hello"
-#   esp-agent session
-#   esp-agent lua --list
-#   esp-agent display on
+#   crush-claw ask "Hello"
+#   crush-claw session
+#   crush-claw lua --list
+#   crush-claw display on
 #
-# Data directory: ~/.esp-agent/
-# Socket:          ~/.esp-agent/agent.sock
-# PID file:        ~/.esp-agent/agent.pid
+# Data directory: ~/.crush-claw/
+# Socket:          ~/.crush-claw/agent.sock
+# PID file:        ~/.crush-claw/agent.pid
 
 set -euo pipefail
 
 VERSION="1.0.0"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BUILD_DIR="${SCRIPT_DIR}/build"
-AGENT_DIR="${HOME}/.esp-agent"
+AGENT_DIR="${HOME}/.crush-claw"
 SOCK_PATH="${AGENT_DIR}/agent.sock"
 PID_FILE="${AGENT_DIR}/agent.pid"
 CONFIG_FILE="${AGENT_DIR}/config.json"
@@ -60,7 +60,7 @@ find_binary() {
     elif command -v esp-claw-desktop >/dev/null 2>&1; then
         command -v esp-claw-desktop
     else
-        die "Binary not found. Run './esp-agent build' or install the package."
+        die "Binary not found. Run './crush-claw build' or install the package."
     fi
 }
 
@@ -72,7 +72,7 @@ _agent_send() {
     local cmd="$1"
     local timeout_sec="${2:-140}"
     if ! is_running; then
-        die "Agent is not running. Start it first: esp-agent start"
+        die "Agent is not running. Start it first: crush-claw start"
     fi
     [ -S "$SOCK_PATH" ] || die "Socket not found at $SOCK_PATH."
     printf '%s\n' "$cmd" | timeout "$timeout_sec" nc -U -N "$SOCK_PATH" 2>/dev/null
@@ -87,7 +87,7 @@ _agent_send() {
 
 cmd_config() {
     echo "========================================"
-    echo "  esp-agent Configuration Wizard"
+    echo "  Crush Claw Configuration Wizard"
     echo "========================================"
     echo ""
     echo "This wizard will create ${CONFIG_FILE}"
@@ -386,12 +386,12 @@ EOF
     echo "  WeChat:     ${wechat_enabled}"
     echo "  Display:    ${display_enabled}"
     echo ""
-    echo "Run 'esp-agent start' to launch the agent."
+    echo "Run 'crush-claw start' to launch the agent."
 }
 
 cmd_start() {
     if is_running; then
-        die "Agent is already running (PID $(cat "$PID_FILE")). Use 'esp-agent stop' first."
+        die "Agent is already running (PID $(cat "$PID_FILE")). Use 'crush-claw stop' first."
     fi
 
     local foreground_mode=""
@@ -431,7 +431,7 @@ cmd_start() {
     # Remove stale socket
     rm -f "$SOCK_PATH"
 
-    echo "=== Starting esp-agent ==="
+    echo "=== Starting Crush Claw ==="
     echo "Binary:   $BIN"
     echo "Data:     $AGENT_DIR"
     echo "Log:      $LOG_FILE"
@@ -443,7 +443,7 @@ cmd_start() {
         # Foreground: no daemon, logs to terminal, wait blocks
         echo "Running in foreground (Ctrl+C to stop)..."
         echo ""
-        ESP_AGENT_DATA_DIR="$AGENT_DIR" "$BIN" \
+        CRUSH_CLAW_DATA_DIR="$AGENT_DIR" "$BIN" \
             --pid-file "$PID_FILE" \
             $data_dir_opt &
         local pid=$!
@@ -452,7 +452,7 @@ cmd_start() {
         rm -f "$PID_FILE" "$SOCK_PATH"
     else
         # Daemon mode: binary daemonizes itself
-        ESP_AGENT_DATA_DIR="$AGENT_DIR" "$BIN" \
+        CRUSH_CLAW_DATA_DIR="$AGENT_DIR" "$BIN" \
             --daemon \
             --pid-file "$PID_FILE" \
             $data_dir_opt &
@@ -534,7 +534,7 @@ cmd_status() {
 
 cmd_logs() {
     if ! is_running; then
-        die "Agent is not running. Start it first: esp-agent start"
+        die "Agent is not running. Start it first: crush-claw start"
     fi
     [ -f "$LOG_FILE" ] || die "Log file not found at $LOG_FILE."
     echo "Tailing $LOG_FILE (Ctrl+C to stop)..."
@@ -546,51 +546,36 @@ cmd_service() {
     local action="${1:-}"
     case "$action" in
         enable)
-            systemctl --user enable esp-agent.service
+            systemctl --user enable crush-claw.service
             echo "Systemd user service enabled (auto-start on login)."
             ;;
         disable)
-            systemctl --user disable esp-agent.service
+            systemctl --user disable crush-claw.service
             echo "Systemd user service disabled."
             ;;
         start)
-            systemctl --user start esp-agent.service
+            systemctl --user start crush-claw.service
             echo "Service started via systemd."
             ;;
         stop)
-            systemctl --user stop esp-agent.service
+            systemctl --user stop crush-claw.service
             echo "Service stopped via systemd."
             ;;
         status)
-            systemctl --user status esp-agent.service
+            systemctl --user status crush-claw.service
             ;;
         *)
-            echo "Usage: esp-agent service <enable|disable|start|stop|status>"
+            echo "Usage: crush-claw service <enable|disable|start|stop|status>"
             return 1
             ;;
     esac
 }
 
-cmd_build() {
-    echo "=== Building esp-agent ==="
-    mkdir -p "$BUILD_DIR"
-    cd "$BUILD_DIR"
-    cmake "$SCRIPT_DIR" -DCMAKE_BUILD_TYPE=Release
-    make -j"$(nproc)"
-    echo "Build complete: $BUILD_DIR/esp-claw-desktop"
-}
-
-cmd_clean() {
-    echo "Cleaning build directory..."
-    rm -rf "$BUILD_DIR"
-    echo "Clean complete."
-}
-
 cmd_help() {
-    # Show esp-agent management help (no REPL commands listed here)
-    echo "esp-agent v${VERSION} — Desktop simulator for esp-claw"
+    # Show crush-claw management help (no REPL commands listed here)
+    echo "crush-claw v${VERSION} — Desktop simulator for esp-claw"
     echo ""
-    echo "Usage: esp-agent <command> [args...]"
+    echo "Usage: crush-claw <command> [args...]"
     echo ""
     echo "Management commands:"
     echo "  config       Full setup wizard (LLM, channels, search, display)"
@@ -602,24 +587,22 @@ cmd_help() {
     echo "  status       Check if the agent is running"
     echo "  logs         Tail the agent log file"
     echo "  service      Systemd service management (enable|disable|start|stop|status)"
-    echo "  build        Build the agent binary from source"
-    echo "  clean        Remove build artifacts"
     echo ""
     echo "All other commands are forwarded directly to the esp-claw agent CLI."
-    echo "Use 'esp-agent esp-claw help' to see available agent commands."
+    echo "Use 'crush-claw esp-claw help' to see available agent commands."
     echo ""
     echo "Examples:"
-    echo "  esp-agent ask \"Hello, what can you do?\""
-    echo "  esp-agent session"
-    echo "  esp-agent lua --list"
-    echo "  esp-agent esp-claw help"
+    echo "  crush-claw ask \"Hello, what can you do?\""
+    echo "  crush-claw session"
+    echo "  crush-claw lua --list"
+    echo "  crush-claw esp-claw help"
     echo ""
     echo "Other:"
-    echo "  esp-agent --version    Print version"
+    echo "  crush-claw --version    Print version"
     echo ""
-    echo "Data:  ~/.esp-agent/"
-    echo "Socket: ~/.esp-agent/agent.sock"
-    echo "Log:    ~/.esp-agent/agent.log"
+    echo "Data:  ~/.crush-claw/"
+    echo "Socket: ~/.crush-claw/agent.sock"
+    echo "Log:    ~/.crush-claw/agent.log"
 
     # Append REPL help if agent is running
     if is_running && [ -S "$SOCK_PATH" ]; then
@@ -640,9 +623,7 @@ case "${1:-help}" in
     status)       shift; cmd_status "$@" ;;
     logs)         shift; cmd_logs "$@" ;;
     service)      shift; cmd_service "$@" ;;
-    build)        shift; cmd_build "$@" ;;
-    clean)        shift; cmd_clean "$@" ;;
-    --version)    echo "esp-agent v${VERSION}" ;;
+    --version)    echo "crush-claw v${VERSION}" ;;
     help|--help|-h) shift; cmd_help "$@" ;;
 
     # Explicit REPL passthrough prefix

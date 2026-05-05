@@ -1,8 +1,8 @@
 /*
  * main_desktop.c — Desktop simulator entry point for esp-claw
  *
- * Replaces the ESP32 main.c.  Reads config from ~/.esp-agent/config.json,
- * stores data under ~/.esp-agent/, and optionally disables the SDL2 display.
+ * Replaces the ESP32 main.c.  Reads config from ~/.crush-claw/config.json,
+ * stores data under ~/.crush-claw/, and optionally disables the SDL2 display.
  */
 #include <dirent.h>
 #include <fcntl.h>
@@ -46,7 +46,23 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-#define ESP_AGENT_VERSION "1.0.0"
+#define CRUSH_CLAW_VERSION "1.0.0"
+
+/* ---- Startup watchdog ---- */
+#include <time.h>
+static double s_startup_t0; /* wall-clock seconds at main() entry */
+
+static double startup_elapsed(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec + ts.tv_nsec * 1e-9 - s_startup_t0;
+}
+
+#define STARTUP_STAGE(stage) do { \
+    ESP_LOGI(TAG, "[startup] %.1fs +++ %s", startup_elapsed(), stage); \
+} while(0)
+
 #if defined(PLATFORM_WINDOWS)
 static void get_defaults_dir(char *buf, size_t bufsz)
 {
@@ -57,7 +73,7 @@ static void get_defaults_dir(char *buf, size_t bufsz)
     snprintf(buf, bufsz, "%s\\defaults", exe_path);
 }
 #else
-#define DEFAULTS_DIR "/usr/share/esp-agent/defaults"
+#define DEFAULTS_DIR "/usr/share/crush-claw/defaults"
 static const char *get_defaults_dir(char *buf, size_t bufsz)
 {
     (void)bufsz;
@@ -427,7 +443,7 @@ static void print_usage(const char *prog)
     printf("Usage: %s [OPTIONS]\n", prog);
     printf("\n");
     printf("Options:\n");
-    printf("  --data-dir <path>    Custom data directory (default: ~/.esp-agent)\n");
+    printf("  --data-dir <path>    Custom data directory (default: ~/.crush-claw)\n");
     printf("  --pid-file <path>    Write PID to file (used with --daemon)\n");
     printf("  --daemon             Run as background daemon\n");
     printf("  --foreground         Run in foreground (default, overrides --daemon)\n");
@@ -439,6 +455,12 @@ static void print_usage(const char *prog)
 
 int main(int argc, char **argv)
 {
+    {
+        struct timespec ts;
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        s_startup_t0 = ts.tv_sec + ts.tv_nsec * 1e-9;
+    }
+
 #if defined(PLATFORM_WINDOWS)
     SetProcessDPIAware();
 
@@ -473,7 +495,7 @@ int main(int argc, char **argv)
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--version") == 0) {
-            printf("esp-agent %s\n", ESP_AGENT_VERSION);
+            printf("crush-claw %s\n", CRUSH_CLAW_VERSION);
             return 0;
         }
         if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
@@ -525,7 +547,7 @@ int main(int argc, char **argv)
         home = getenv("HOME");
 #endif
         if (!home) home = ".";
-        snprintf(data_dir, sizeof(data_dir), "%s/.esp-agent", home);
+        snprintf(data_dir, sizeof(data_dir), "%s/.crush-claw", home);
     }
 
     /* Build sub-paths */
@@ -601,7 +623,7 @@ int main(int argc, char **argv)
         if (g_pid_file_path[0]) write_pid_file();
     }
 
-    printf("=== esp-claw Desktop Simulator v%s ===\n", ESP_AGENT_VERSION);
+    printf("=== esp-claw Desktop Simulator v%s ===\n", CRUSH_CLAW_VERSION);
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wformat-truncation"
@@ -831,11 +853,11 @@ int main(int argc, char **argv)
 #if defined(PLATFORM_WINDOWS)
     {
         char env_buf[PATH_MAX + 32];
-        snprintf(env_buf, sizeof(env_buf), "ESP_AGENT_DATA_DIR=%s", abs_data_dir);
+        snprintf(env_buf, sizeof(env_buf), "CRUSH_CLAW_DATA_DIR=%s", abs_data_dir);
         _putenv(env_buf);
     }
 #else
-    setenv("ESP_AGENT_DATA_DIR", abs_data_dir, 1);
+    setenv("CRUSH_CLAW_DATA_DIR", abs_data_dir, 1);
 #endif
     ESP_LOGI(TAG, "Display: %s", display_enabled ? "enabled" : "disabled");
     ESP_LOGI(TAG, "LLM config: profile=%s model=%s base_url=%s",
@@ -863,10 +885,12 @@ int main(int argc, char **argv)
                 fclose(pf);
             }
         }
+        STARTUP_STAGE("display_hal_create");
         esp_err_t d_err = display_hal_create(NULL, NULL, 0, lcd_width, lcd_height);
         if (d_err != ESP_OK) {
             ESP_LOGW(TAG, "Failed to create display: %s", esp_err_to_name(d_err));
         }
+        STARTUP_STAGE("display_hal_create returned");
 #if defined(PLATFORM_WINDOWS)
         /* Sync always-hide from registry */
         display_hal_set_always_hide(tray_always_hide_is_enabled());
@@ -874,8 +898,13 @@ int main(int argc, char **argv)
         if (display_hal_is_active()) {
             void *native_hwnd = display_hal_get_native_window();
             if (native_hwnd) {
+                STARTUP_STAGE("tray_icon_init");
                 tray_icon_init();
+                STARTUP_STAGE("tray_icon_set_sdl_window");
                 tray_icon_set_sdl_window(native_hwnd);
+                /* Now show the SDL window — tray icon removed it from taskbar,
+                   so there's no taskbar icon flash. */
+                display_hal_show_window();
                 ESP_LOGI(TAG, "System tray icon initialized");
             }
         }
@@ -980,11 +1009,13 @@ int main(int argc, char **argv)
     }
 #endif
 
+    STARTUP_STAGE("app_claw_start");
     esp_err_t err = app_claw_start(&config, &paths);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start app_claw: %s", esp_err_to_name(err));
         return 1;
     }
+    STARTUP_STAGE("app_claw_start OK");
 
     /* ---- cap_cli: allow LLM to run safe CLI commands ---- */
 #if CONFIG_APP_CLAW_CAP_CLI
@@ -1025,6 +1056,7 @@ int main(int argc, char **argv)
 #endif
 
     /* ---- start emote engine (boot animation) ---- */
+    STARTUP_STAGE("app_claw_ui_start");
     err = app_claw_ui_start();
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "Emote engine failed (%s), using fallback boot text",
@@ -1049,6 +1081,7 @@ int main(int argc, char **argv)
         }
     }
 
+    STARTUP_STAGE("entering main loop");
     ESP_LOGI(TAG, "Desktop simulator running. Press Ctrl+C to stop.");
     ESP_LOGI(TAG, "CLI socket: %s/agent.sock", abs_data_dir);
 

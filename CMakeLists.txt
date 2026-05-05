@@ -444,20 +444,20 @@ include(${CMAKE_SOURCE_DIR}/components/desktop/CMakeLists.txt)
 # Allow the sim to include its own dir as system include (for esp_ headers)
 target_include_directories(esp-claw-desktop SYSTEM BEFORE PRIVATE ${SIM_INC_DIR})
 
-# ---- esp-agent CLI tool (management client) ----
+# ---- crush-claw CLI tool (management client) ----
 if(WIN32)
-    add_executable(esp-agent
-        ${CMAKE_SOURCE_DIR}/cli/esp_agent_cli.c
+    add_executable(crush-claw
+        ${CMAKE_SOURCE_DIR}/cli/crush_claw_cli.c
         ${SIM_HAL_DIR}/cJSON.c
         ${SIM_HAL_DIR}/platform_utils.c
         ${CMAKE_SOURCE_DIR}/resources.rc
     )
-    target_include_directories(esp-agent PRIVATE
+    target_include_directories(crush-claw PRIVATE
         ${SIM_INC_DIR}
         ${SIM_INC_DIR}/platform
     )
-    target_link_libraries(esp-agent PRIVATE ws2_32)
-    target_compile_options(esp-agent PRIVATE -Wall -Wextra)
+    target_link_libraries(crush-claw PRIVATE ws2_32)
+    target_compile_options(crush-claw PRIVATE -Wall -Wextra)
 endif()
 
 message(STATUS "=== esp-claw Desktop Simulator Build ===")

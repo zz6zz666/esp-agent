@@ -188,6 +188,7 @@ typedef struct {
 static sdl_ctx_t s_ctx = {0};
 static input_state_t s_input = {0};
 static pthread_t s_main_thread;
+static double s_disp_t0 = 0; /* startup timer base for display_hal_create */
 static pthread_mutex_t s_present_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t s_present_cond = PTHREAD_COND_INITIALIZER;
 static volatile bool g_present_pending = false;
@@ -195,6 +196,9 @@ static bool s_ttf_ok = false;
 
 /* ---- Glyph cache (avoids re-rasterizing emoji / text every frame) ---- */
 #define GLYPH_CACHE_MAX 512
+#define GLYPH_CACHE_MAGIC 0xCAFE
+#define GLYPH_CACHE_BIN "glyph_cache.bin"
+static pthread_mutex_t s_glyph_disk_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 typedef struct {
     Uint32      codepoint;
@@ -230,6 +234,24 @@ void display_hal_mark_frame_ready(void)
     /* Legacy: the main loop now renders every tick regardless. */
 }
 
+/*
+ * Pump window messages during startup so the window never shows
+ * "Not Responding" even if a subsequent init stage blocks.
+ * Safe to call before SDL window exists (no-op then).
+ */
+void display_hal_pump_events(void)
+{
+    if (!s_ctx.window) return;
+    SDL_PumpEvents();
+#if defined(PLATFORM_WINDOWS)
+    MSG msg;
+    while (PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE)) {
+        TranslateMessage(&msg);
+        DispatchMessageA(&msg);
+    }
+#endif
+}
+
 bool display_hal_is_active(void)
 {
     return s_ctx.window != NULL;
@@ -258,12 +280,25 @@ void display_hal_hide_window(void)
 {
     if (!s_ctx.window) return;
 #if defined(PLATFORM_WINDOWS)
-    SDL_SysWMinfo wm;
-    SDL_VERSION(&wm.version);
-    if (SDL_GetWindowWMInfo(s_ctx.window, &wm))
-        ShowWindow(wm.info.win.window, SW_HIDE);
+    /* Strip WS_EX_TOPMOST before hiding so the OS properly
+       releases focus and Z-order.  An always-on-top window
+       that is merely hidden (SW_HIDE) can still contend for
+       activation, causing focus-stealing and ghost-border
+       flashes on some GPU/driver pairings.
+       WS_EX_TOPMOST is restored in display_hal_show_window(). */
+    {
+        SDL_SysWMinfo wm;
+        SDL_VERSION(&wm.version);
+        if (SDL_GetWindowWMInfo(s_ctx.window, &wm)) {
+            HWND hwnd = wm.info.win.window;
+            LONG exstyle = GetWindowLong(hwnd, GWL_EXSTYLE);
+            if (exstyle & WS_EX_TOPMOST)
+                SetWindowLong(hwnd, GWL_EXSTYLE, exstyle & ~WS_EX_TOPMOST);
+            ShowWindow(hwnd, SW_HIDE);
+        }
+    }
 #else
-    SDL_MinimizeWindow(s_ctx.window);
+    SDL_HideWindow(s_ctx.window);
 #endif
     if (!s_ctx.lua_mode) {
         s_ctx.emote_visible = false;
@@ -274,10 +309,20 @@ void display_hal_show_window(void)
 {
     if (!s_ctx.window) return;
 #if defined(PLATFORM_WINDOWS)
-    SDL_SysWMinfo wm;
-    SDL_VERSION(&wm.version);
-    if (SDL_GetWindowWMInfo(s_ctx.window, &wm))
-        ShowWindow(wm.info.win.window, SW_SHOW);
+    /* Show without activation, then restore WS_EX_TOPMOST
+       for the emote window (Lua windows are never topmost). */
+    {
+        SDL_SysWMinfo wm;
+        SDL_VERSION(&wm.version);
+        if (SDL_GetWindowWMInfo(s_ctx.window, &wm)) {
+            HWND hwnd = wm.info.win.window;
+            ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+            if (!s_ctx.lua_mode) {
+                LONG exstyle = GetWindowLong(hwnd, GWL_EXSTYLE);
+                SetWindowLong(hwnd, GWL_EXSTYLE, exstyle | WS_EX_TOPMOST);
+            }
+        }
+    }
 #else
     SDL_ShowWindow(s_ctx.window);
 #endif
@@ -475,10 +520,10 @@ static void top_center_to_rect(int tc_x, int tc_y,
     *out_y = y;
 }
 
-/* Save / load top-center position to ~/.esp-agent/window_pos */
+/* Save / load top-center position to ~/.crush-claw/window_pos */
 static void save_window_pos(void)
 {
-    const char *data_dir = getenv("ESP_AGENT_DATA_DIR");
+    const char *data_dir = getenv("CRUSH_CLAW_DATA_DIR");
     if (!data_dir) return;
     char path[512];
     snprintf(path, sizeof(path), "%s/window_pos", data_dir);
@@ -529,6 +574,7 @@ bool display_hal_is_emote_visible(void)
 
 void display_hal_set_always_hide(bool on)
 {
+    if (s_ctx.always_hide == on) return;
     s_ctx.always_hide = on;
     if (s_ctx.window) {
         if (on) display_hal_hide_window();
@@ -603,6 +649,15 @@ esp_err_t display_hal_create(esp_lcd_panel_handle_t panel_handle,
 
     /* If already on the main thread, do SDL ops directly (startup path) */
     if (pthread_equal(pthread_self(), s_main_thread) || s_main_thread == 0) {
+        if (s_disp_t0 == 0) {
+            struct timespec _ts0;
+            clock_gettime(CLOCK_MONOTONIC, &_ts0);
+            s_disp_t0 = _ts0.tv_sec + _ts0.tv_nsec * 1e-9;
+        }
+#define _ELAPSED() ({ \
+    struct timespec _tsn; clock_gettime(CLOCK_MONOTONIC, &_tsn); \
+    _tsn.tv_sec + _tsn.tv_nsec * 1e-9 - s_disp_t0; })
+
         if (s_ctx.window) {
             if (s_ctx.width == lcd_w && s_ctx.height == lcd_h) {
                 return ESP_OK;
@@ -610,10 +665,12 @@ esp_err_t display_hal_create(esp_lcd_panel_handle_t panel_handle,
             display_hal_destroy();
         }
 
+        ESP_LOGI(TAG, "[startup] %.1fs SDL_Init", _ELAPSED());
         if (SDL_Init(SDL_INIT_VIDEO) < 0) {
             ESP_LOGE(TAG, "SDL_Init failed: %s", SDL_GetError());
             return ESP_FAIL;
         }
+        ESP_LOGI(TAG, "[startup] %.1fs SDL_Init OK", _ELAPSED());
 
         s_ctx.width  = lcd_w;
         s_ctx.height = lcd_h;
@@ -635,6 +692,7 @@ esp_err_t display_hal_create(esp_lcd_panel_handle_t panel_handle,
         top_center_to_rect(s_ctx.top_center_x, s_ctx.top_center_y,
                            s_ctx.emu_width, s_ctx.emu_height, TITLE_BAR_H,
                            &wx, &wy);
+        ESP_LOGI(TAG, "[startup] %.1fs SDL_CreateWindow (hidden)...", _ELAPSED());
         s_ctx.window = create_window_borderless("esp-claw Desktop Simulator",
                                                  s_ctx.emu_width, s_ctx.emu_height,
                                                  TITLE_BAR_H, true);
@@ -643,9 +701,14 @@ esp_err_t display_hal_create(esp_lcd_panel_handle_t panel_handle,
             SDL_Quit();
             return ESP_FAIL;
         }
+        /* Hide window immediately — prevent black window + taskbar flash.
+           Will be shown after tray icon is ready (see main_desktop.c). */
+        SDL_HideWindow(s_ctx.window);
+        ESP_LOGI(TAG, "[startup] %.1fs SDL_CreateWindow OK (hidden)", _ELAPSED());
         SDL_SetWindowPosition(s_ctx.window, wx, wy);
         apply_window_effects(s_ctx.window);
 
+        ESP_LOGI(TAG, "[startup] %.1fs SDL_CreateRenderer...", _ELAPSED());
         s_ctx.renderer = SDL_CreateRenderer(s_ctx.window, -1,
                                              SDL_RENDERER_ACCELERATED |
                                              SDL_RENDERER_PRESENTVSYNC);
@@ -655,14 +718,17 @@ esp_err_t display_hal_create(esp_lcd_panel_handle_t panel_handle,
             SDL_Quit();
             return ESP_FAIL;
         }
+        ESP_LOGI(TAG, "[startup] %.1fs SDL_CreateRenderer OK", _ELAPSED());
         SDL_SetRenderDrawColor(s_ctx.renderer, 0, 0, 0, 255);
 
+        ESP_LOGI(TAG, "[startup] %.1fs recreate_surface", _ELAPSED());
         if (recreate_surface(s_ctx.emu_width, s_ctx.emu_height) != ESP_OK) {
             SDL_DestroyRenderer(s_ctx.renderer);
             SDL_DestroyWindow(s_ctx.window);
             SDL_Quit();
             return ESP_FAIL;
         }
+        ESP_LOGI(TAG, "[startup] %.1fs recreate_surface OK", _ELAPSED());
 
         s_ctx.emote_visible = true;
         s_main_thread = pthread_self();
@@ -701,17 +767,21 @@ esp_err_t display_hal_create(esp_lcd_panel_handle_t panel_handle,
 
 init_fonts_and_input:
     /* TTF font stack for text rendering (CJK + emoji + symbols fallback) */
+    ESP_LOGI(TAG, "[startup] %.1fs TTF_Init", _ELAPSED());
     if (TTF_Init() < 0) {
         ESP_LOGW(TAG, "TTF_Init failed: %s", TTF_GetError());
         s_ttf_ok = false;
     } else {
+        ESP_LOGI(TAG, "[startup] %.1fs discover_fonts", _ELAPSED());
         discover_fonts();
 
         if (s_font_path_count > 0) {
             s_ttf_ok = true;
+            ESP_LOGI(TAG, "[startup] %.1fs font_stack_load", _ELAPSED());
             font_stack_load(16);
+            ESP_LOGI(TAG, "[startup] %.1fs glyph_cache_load_all", _ELAPSED());
             glyph_cache_load_all();
-            ESP_LOGI(TAG, "TTF font stack loaded (%d fonts)", s_font_path_count);
+            ESP_LOGI(TAG, "[startup] %.1fs TTF font stack loaded (%d fonts)", _ELAPSED(), s_font_path_count);
         } else {
             ESP_LOGW(TAG, "No TTF fonts found — text will not render");
             s_ttf_ok = false;
@@ -728,9 +798,10 @@ init_fonts_and_input:
     s_input.scale_y = 1.0f;
     esp_lcd_touch_init_sdl();
 
-    ESP_LOGI(TAG, "Display created: LCD=%dx%d emu=%dx%d (main_thread=%lu)",
-             s_ctx.width, s_ctx.height, s_ctx.emu_width, s_ctx.emu_height,
+    ESP_LOGI(TAG, "[startup] %.1fs Display created: LCD=%dx%d emu=%dx%d (main_thread=%lu)",
+             _ELAPSED(), s_ctx.width, s_ctx.height, s_ctx.emu_width, s_ctx.emu_height,
              (unsigned long)s_main_thread);
+#undef _ELAPSED
     return ESP_OK;
 }
 
@@ -1281,9 +1352,25 @@ esp_err_t display_hal_present(void)
                      new_w, new_h, target_lua ? "lua" : "emote");
         }
 
-        /* ---- Render current frame (always render when surface exists) ---- */
+        /* ---- Render current frame ---- */
         /* Process events BEFORE rendering for low-latency drag response */
         process_sdl_events();
+
+        /* When emote window is hidden (tray-only mode), skip ALL GPU
+           rendering.  Some GPU drivers can cause a brief window flash
+           when executing RenderClear/RenderCopy even without
+           RenderPresent on a hidden window. */
+        if (!s_ctx.lua_mode && !s_ctx.emote_visible) {
+            /* Still signal waiting worker threads */
+            pthread_mutex_lock(&s_present_mutex);
+            if (g_present_pending) {
+                g_present_pending = false;
+                pthread_cond_broadcast(&s_present_cond);
+            }
+            pthread_mutex_unlock(&s_present_mutex);
+            return ESP_OK;
+        }
+
         if (s_ctx.texture && s_ctx.surface) {
             SDL_UpdateTexture(s_ctx.texture, NULL,
                               s_ctx.surface->pixels, s_ctx.surf_w * 2);
@@ -1327,7 +1414,7 @@ esp_err_t display_hal_present(void)
             SDL_RenderPresent(s_ctx.renderer);
         }
 
-        /* Signal any waiting worker thread that the frame was presented */
+        /* Signal any waiting worker thread that the frame was processed */
         pthread_mutex_lock(&s_present_mutex);
         if (g_present_pending) {
             g_present_pending = false;
@@ -1767,7 +1854,7 @@ static int utf8_encode(Uint32 cp, char *buf)
 
 static void glyph_cache_get_dir(char *buf, size_t bufsz)
 {
-    snprintf(buf, bufsz, "%s/.esp-agent/glyph_cache", get_home_dir());
+    snprintf(buf, bufsz, "%s/.crush-claw/glyph_cache", get_home_dir());
 }
 
 static void glyph_cache_clear(void)
@@ -1806,10 +1893,20 @@ static void glyph_cache_add_entry(Uint32 cp, int ptsize, int font_idx,
     s_glyph_cache_count++;
 }
 
-/* Save a single glyph to disk.  File format:
- *   [4 bytes LE] width
- *   [4 bytes LE] height
- *   [w * h * 4 bytes] RGBA32 pixels  */
+/* Append a single glyph to the shared glyph_cache.bin.
+   File format:
+     [4 bytes] magic    0xCACH
+     [4 bytes] num_entries  (updated on each append)
+     entry 0 ...
+     entry N ...
+   Each entry:
+     [4 bytes] codepoint
+     [4 bytes] ptsize
+     [4 bytes] font_idx
+     [2 bytes] color565
+     [4 bytes] width
+     [4 bytes] height
+     [width*height*4 bytes] RGBA32 pixels (row-major)  */
 static void glyph_cache_save(Uint32 cp, int ptsize, int font_idx,
                               uint16_t color565, SDL_Surface *surf)
 {
@@ -1820,97 +1917,110 @@ static void glyph_cache_save(Uint32 cp, int ptsize, int font_idx,
     mkdir_safe(dir, 0755);
 
     char path[768];
-    snprintf(path, sizeof(path), "%s/%X_%d_%d_%X.cache",
-             dir, cp, ptsize, font_idx, (unsigned)color565);
+    snprintf(path, sizeof(path), "%s/%s", dir, GLYPH_CACHE_BIN);
 
-    FILE *f = fopen(path, "wb");
-    if (!f) return;
+    pthread_mutex_lock(&s_glyph_disk_mutex);
+
+    uint32_t count = 0;
+    FILE *f = fopen(path, "rb+");
+    if (f) {
+        uint32_t magic;
+        if (fread(&magic, 4, 1, f) == 1 && magic == GLYPH_CACHE_MAGIC) {
+            fread(&count, 4, 1, f);
+        }
+        /* Update header with new count */
+        rewind(f);
+        magic = GLYPH_CACHE_MAGIC;
+        count++;
+        fwrite(&magic, 4, 1, f);
+        fwrite(&count, 4, 1, f);
+        fseek(f, 0, SEEK_END);
+    } else {
+        /* First entry — create file and write header */
+        f = fopen(path, "wb");
+        if (!f) { pthread_mutex_unlock(&s_glyph_disk_mutex); return; }
+        uint32_t magic = GLYPH_CACHE_MAGIC;
+        count = 1;
+        fwrite(&magic, 4, 1, f);
+        fwrite(&count, 4, 1, f);
+    }
 
     uint32_t w = (uint32_t)surf->w;
     uint32_t h = (uint32_t)surf->h;
+    fwrite(&cp, 4, 1, f);
+    fwrite(&ptsize, 4, 1, f);
+    fwrite(&font_idx, 4, 1, f);
+    fwrite(&color565, 2, 1, f);
     fwrite(&w, 4, 1, f);
     fwrite(&h, 4, 1, f);
-
-    /* Write row by row because SDL_Surface pitch may differ from w*4 */
-    for (int y = 0; y < surf->h; y++) {
-        fwrite((uint8_t *)surf->pixels + y * surf->pitch, 4, surf->w, f);
+    for (uint32_t y = 0; y < h; y++) {
+        fwrite((uint8_t *)surf->pixels + y * surf->pitch, 4, w, f);
     }
     fclose(f);
+
+    pthread_mutex_unlock(&s_glyph_disk_mutex);
 }
 
-/* Load a single glyph from disk.  Returns NULL if not found or corrupt. */
-static SDL_Surface *glyph_cache_load_from_disk(Uint32 cp, int ptsize,
-                                                int font_idx, uint16_t color565)
+/* Read the shared glyph_cache.bin and pre-warm the in-memory cache.
+   Single fopen → one Defender scan, regardless of entry count. */
+static void glyph_cache_load_all(void)
 {
     char dir[512];
     glyph_cache_get_dir(dir, sizeof(dir));
 
     char path[768];
-    snprintf(path, sizeof(path), "%s/%X_%d_%d_%X.cache",
-             dir, cp, ptsize, font_idx, (unsigned)color565);
+    snprintf(path, sizeof(path), "%s/%s", dir, GLYPH_CACHE_BIN);
 
     FILE *f = fopen(path, "rb");
-    if (!f) return NULL;
+    if (!f) return;
 
-    uint32_t w = 0, h = 0;
-    if (fread(&w, 4, 1, f) != 1 || fread(&h, 4, 1, f) != 1 ||
-        w == 0 || h == 0 || w > 4096 || h > 4096) {
+    uint32_t magic, count;
+    if (fread(&magic, 4, 1, f) != 1 || magic != GLYPH_CACHE_MAGIC ||
+        fread(&count, 4, 1, f) != 1 || count == 0) {
         fclose(f);
-        return NULL;
+        return;
     }
 
-    SDL_Surface *surf = SDL_CreateRGBSurfaceWithFormat(
-        0, (int)w, (int)h, 32, SDL_PIXELFORMAT_RGBA32);
-    if (!surf) { fclose(f); return NULL; }
-
-    uint8_t *row = malloc(w * 4);
-    if (!row) { SDL_FreeSurface(surf); fclose(f); return NULL; }
-
-    for (uint32_t y = 0; y < h; y++) {
-        if (fread(row, 4, w, f) != w) {
-            free(row); SDL_FreeSurface(surf); fclose(f); return NULL;
+    for (uint32_t i = 0; i < count; i++) {
+        uint32_t cp, ptsize, font_idx, w, h;
+        uint16_t color565;
+        if (fread(&cp, 4, 1, f) != 1 ||
+            fread(&ptsize, 4, 1, f) != 1 ||
+            fread(&font_idx, 4, 1, f) != 1 ||
+            fread(&color565, 2, 1, f) != 1 ||
+            fread(&w, 4, 1, f) != 1 ||
+            fread(&h, 4, 1, f) != 1) break;
+        if (w == 0 || h == 0 || w > 4096 || h > 4096) {
+            fseek(f, (long)w * h * 4, SEEK_CUR); continue;
         }
-        memcpy((uint8_t *)surf->pixels + y * surf->pitch, row, w * 4);
-    }
-    free(row);
-    fclose(f);
+        if ((int)font_idx >= s_font_stack_count) {
+            fseek(f, (long)w * h * 4, SEEK_CUR); continue;
+        }
 
-    SDL_SetSurfaceBlendMode(surf, SDL_BLENDMODE_BLEND);
-    return surf;
-}
+        SDL_Surface *surf = SDL_CreateRGBSurfaceWithFormat(
+            0, (int)w, (int)h, 32, SDL_PIXELFORMAT_RGBA32);
+        if (!surf) { fseek(f, (long)w * h * 4, SEEK_CUR); continue; }
 
-/* Scan the disk cache directory and pre-warm the in-memory cache. */
-static void glyph_cache_load_all(void)
-{
-    char dir[512];
-    glyph_cache_get_dir(dir, sizeof(dir));
-    mkdir_safe(dir, 0755);
+        uint8_t *row = malloc(w * 4);
+        if (!row) { SDL_FreeSurface(surf); fseek(f, (long)w * h * 4, SEEK_CUR); continue; }
 
-    DIR *d = opendir(dir);
-    if (!d) return;
-
-    struct dirent *ent;
-    while ((ent = readdir(d)) != NULL) {
-        unsigned cp_hex, color_hex;
-        int ptsize, font_idx;
-        if (sscanf(ent->d_name, "%X_%d_%d_%X.cache",
-                   &cp_hex, &ptsize, &font_idx, &color_hex) == 4) {
-            /* Only load if the font index is still valid for the current
-               stack.  Stale entries (from a different font configuration)
-               are silently ignored. */
-            if (font_idx >= s_font_stack_count) continue;
-
-            SDL_Surface *surf = glyph_cache_load_from_disk(
-                (Uint32)cp_hex, ptsize, font_idx, (uint16_t)color_hex);
-            if (surf) {
-                pthread_mutex_lock(&s_glyph_cache_mutex);
-                glyph_cache_add_entry((Uint32)cp_hex, ptsize, font_idx,
-                                      (uint16_t)color_hex, surf);
-                pthread_mutex_unlock(&s_glyph_cache_mutex);
+        for (uint32_t y = 0; y < h; y++) {
+            if (fread(row, 4, w, f) != w) {
+                free(row); SDL_FreeSurface(surf); goto done;
             }
+            memcpy((uint8_t *)surf->pixels + y * surf->pitch, row, w * 4);
         }
+        free(row);
+
+        SDL_SetSurfaceBlendMode(surf, SDL_BLENDMODE_BLEND);
+
+        pthread_mutex_lock(&s_glyph_cache_mutex);
+        glyph_cache_add_entry(cp, ptsize, font_idx, color565, surf);
+        pthread_mutex_unlock(&s_glyph_cache_mutex);
     }
-    closedir(d);
+
+done:
+    fclose(f);
 }
 
 static SDL_Surface *glyph_cache_lookup(Uint32 cp, int ptsize,

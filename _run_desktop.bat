@@ -87,5 +87,5 @@ goto :help
     echo   daemon     Run as background daemon
     echo.
     echo For management commands (start/stop/status/config etc):
-    echo   esp-agent.exe ^<command^>
+    echo   crush-claw.exe ^<command^>
     goto :eof

@@ -2,7 +2,7 @@
 #
 # _run_desktop.sh — Quick build-and-run helper (dev convenience)
 #
-# For production use, prefer: ./esp-agent start
+# For production use, prefer: ./crush-claw start
 #
 set -euo pipefail
 
@@ -11,16 +11,16 @@ cd "$SCRIPT_DIR"
 
 case "${1:-run}" in
     build)
-        ./esp-agent build
+        ./crush-claw build
         ;;
     run)
         echo "=== Quick run (foreground) ==="
-        echo "For daemon mode, use: ./esp-agent start"
+        echo "For daemon mode, use: ./crush-claw start"
         echo ""
         exec ./build/esp-claw-desktop
         ;;
     clean)
-        ./esp-agent clean
+        ./crush-claw clean
         ;;
     *)
         echo "Usage: $0 {build|run|clean}"

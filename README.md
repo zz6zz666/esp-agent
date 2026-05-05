@@ -49,7 +49,7 @@ Crush Claw 运行在你对象（或朋友、伴侣）的电脑上，你通过 AI
 
 ```cmd
 REM 1. 在你的电脑上一键安装
-esp-agent-setup-1.0.0.exe
+crush-claw-setup-1.0.0.exe
 
 REM 2. 把配置文件发给对象
 REM 把你的 LLM Token 和 IM Channel Key 写入 config.json
@@ -112,10 +112,10 @@ REM 把你的 LLM Token 和 IM Channel Key 写入 config.json
 
 ```cmd
 REM 对象收到配置文件后，放入数据目录
-start %USERPROFILE%\.crush-agent\config.json
+start %USERPROFILE%\.crush-claw\config.json
 
 REM 启动小龙虾
-esp-agent start
+crush-claw start
 ```
 
 看到屏幕上的小龙虾了？现在你可以通过 IM 向它发送指令了。
@@ -153,24 +153,24 @@ esp-agent start
 
 | 命令                                    | 说明           |
 | --------------------------------------- | -------------- |
-| `esp-agent config`                    | 交互式配置向导 |
-| `esp-agent start`                     | 后台启动 Agent |
-| `esp-agent stop`                      | 停止 Agent     |
-| `esp-agent restart`                   | 重启 Agent     |
-| `esp-agent status`                    | 查看运行状态   |
-| `esp-agent logs`                      | 查看日志       |
-| `esp-agent service enable\|disable`    | 开机自启管理   |
-| `esp-agent --help`                    | 查看全部命令   |
-| `esp-agent ask "你好"`                | 远程对话       |
-| `esp-agent lua --run --path demo.lua` | 运行 Lua 脚本  |
-| `esp-agent cap list`                  | 查看能力列表   |
+| `crush-claw config`                     | 交互式配置向导 |
+| `crush-claw start`                      | 后台启动 Agent |
+| `crush-claw stop`                       | 停止 Agent     |
+| `crush-claw restart`                    | 重启 Agent     |
+| `crush-claw status`                     | 查看运行状态   |
+| `crush-claw logs`                       | 查看日志       |
+| `crush-claw service enable\|disable`     | 开机自启管理   |
+| `crush-claw --help`                     | 查看全部命令   |
+| `crush-claw ask "你好"`                 | 远程对话       |
+| `crush-claw lua --run --path demo.lua`  | 运行 Lua 脚本  |
+| `crush-claw cap list`                   | 查看能力列表   |
 
 ---
 
 ## 数据目录
 
 ```
-%USERPROFILE%\.crush-agent/
+%USERPROFILE%\.crush-claw\
 ├── config.json              # 配置文件（含你的 Key）
 ├── agent.sock               # IPC 通道
 ├── agent.pid                # PID 文件
@@ -192,7 +192,7 @@ esp-agent start
 ## 从源码构建
 
 ```bash
-git clone <repo-url> && cd esp-agent
+git clone <repo-url> && cd crush-claw
 git submodule update --init
 
 # 依赖安装见 CLAUDE.md
@@ -207,7 +207,7 @@ make -j$(nproc)        # Linux
 ## 架构
 
 ```
-crush-agent/
+crush-claw/
 ├── esp-claw/            # 上游 AI Agent 引擎（只读）
 ├── sim_hal/             # 桌面模拟层 + Lua 沙箱
 ├── cli/                 # CLI 管理工具

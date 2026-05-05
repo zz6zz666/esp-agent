@@ -1,8 +1,8 @@
-#define MyAppName "esp-agent"
+#define MyAppName "Crush Claw"
 #define MyAppVersion "1.0.0"
-#define MyAppPublisher "esp-agent"
-#define MyAppURL "https://github.com/zz6zz666/esp-agent"
-#define MyAppExeName "esp-agent.exe"
+#define MyAppPublisher "Crush Claw"
+#define MyAppURL "https://github.com/zz6zz666/crush-claw"
+#define MyAppExeName "crush-claw.exe"
 #define MyAgentExeName "esp-claw-desktop.exe"
 
 [Setup]
@@ -17,7 +17,7 @@ DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
 OutputDir=.
-OutputBaseFilename=esp-agent-setup-{#MyAppVersion}
+OutputBaseFilename=crush-claw-setup-{#MyAppVersion}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -34,7 +34,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: checkedonce
-Name: "path"; Description: "Add to &PATH environment variable (run esp-agent from any terminal)"; GroupDescription: "Environment:"; Flags: checkedonce
+Name: "path"; Description: "Add to &PATH environment variable (run crush-claw from any terminal)"; GroupDescription: "Environment:"; Flags: checkedonce
 Name: "autostart"; Description: "Start with Wi&ndows (auto-run on login)"; GroupDescription: "Startup:"; Flags: checkedonce
 
 [Files]
@@ -99,11 +99,11 @@ Source: "C:\msys64\mingw64\bin\libngtcp2_crypto_ossl-0.dll"; DestDir: "{app}"; F
 ; Emote engine assets (boot animation)
 Source: "..\sim_hal\assets\284_240\*"; DestDir: "{app}\assets\284_240"; Flags: ignoreversion recursesubdirs createallsubdirs
 
-; Defaults (skills, docs, scripts) — seeded on first run to ~/.esp-agent
+; Defaults (skills, docs, scripts) — seeded on first run to ~/.crush-claw
 Source: "..\defaults\*"; DestDir: "{app}\defaults"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAgentExeName}"; Parameters: "--daemon"; Comment: "Start esp-agent desktop simulator"
+Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAgentExeName}"; Parameters: "--daemon"; Comment: "Start Crush Claw desktop simulator"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{commondesktop}\{#MyAppName}"; Filename: "{app}\{#MyAgentExeName}"; Parameters: "--daemon"; Tasks: desktopicon
 
@@ -115,7 +115,7 @@ Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Control\Session Manager\Environmen
 
 ; Auto-start with Windows (per-user Run key)
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; \
-    ValueType: string; ValueName: "esp-agent"; \
+    ValueType: string; ValueName: "Crush Claw"; \
     ValueData: """{app}\{#MyAgentExeName}"" --daemon"; \
     Tasks: autostart
 
@@ -166,6 +166,6 @@ begin
   { Force kill if still hanging (should not normally happen) }
   Exec('taskkill', '/f /im esp-claw-desktop.exe /t',
        '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec('taskkill', '/f /im esp-agent.exe /t',
+  Exec('taskkill', '/f /im crush-claw.exe /t',
        '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;

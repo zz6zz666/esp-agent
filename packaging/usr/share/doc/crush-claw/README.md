@@ -1,4 +1,4 @@
-# esp-agent —— 基于esp-claw的超轻量级沙盒claw（esp-claw Simulator）
+# Crush Claw —— 基于esp-claw的超轻量级沙盒claw（esp-claw Simulator）
 
 在 Linux 桌面端完整运行 [esp-claw](https://github.com/espressif/esp-claw) 嵌入式 AI Agent 框架，无需 ESP32 硬件。通过一套 POSIX 兼容层（FreeRTOS→pthread、ESP-IDF→stub），将 esp-claw 的核心代码直接在桌面 Linux 上编译运行，提供模拟 LCD 屏和 lua 脚本执行能力。
 
@@ -23,16 +23,16 @@
 
 ```bash
 # 1. 安装 .deb 包
-sudo apt install ./esp-agent_1.0.0_amd64.deb
+sudo apt install ./crush-claw_1.0.0_amd64.deb
 
 # 2. 首次配置（设置 LLM API Key）
-esp-agent config
+crush-claw config
 
 # 3. 启动 Agent
-esp-agent start
+crush-claw start
 
 # 4. 向 Agent 发送消息
-esp-agent ask "你好"
+crush-claw ask "你好"
 ```
 
 ### 方式二：从源码构建
@@ -43,16 +43,16 @@ sudo apt install build-essential cmake pkg-config \
   libcurl4-openssl-dev liblua5.4-dev libsdl2-dev libjson-c-dev
 
 # 2. 克隆仓库
-git clone <repo-url> esp-agent && cd esp-agent
+git clone <repo-url> crush-claw && cd crush-claw
 git submodule update --init
 
 # 3. 编译
-./esp-agent build
+./crush-claw build
 
 # 4. 配置并启动
-./esp-agent config
-./esp-agent start
-./esp-agent ask "你好"
+./crush-claw config
+./crush-claw start
+./crush-claw ask "你好"
 ```
 
 ## 配置 LLM
@@ -60,7 +60,7 @@ git submodule update --init
 ### 方式一：交互式配置向导（推荐）
 
 ```bash
-esp-agent config
+crush-claw config
 ```
 
 交互式向导会依次询问 API Key、模型名称、Profile 类型、自定义 Base URL 等信息。
@@ -68,14 +68,14 @@ esp-agent config
 ### 方式二：环境变量
 
 ```bash
-LLM_API_KEY=sk-xxx LLM_MODEL=gpt-4o LLM_PROFILE=openai esp-agent start
+LLM_API_KEY=sk-xxx LLM_MODEL=gpt-4o LLM_PROFILE=openai crush-claw start
 ```
 
 环境变量会覆盖 `config.json` 中的对应值。
 
 ### 方式三：直接编辑配置文件
 
-`~/.esp-agent/config.json`:
+`~/.crush-claw/config.json`:
 
 ```json
 {
@@ -162,76 +162,76 @@ LLM_API_KEY=sk-xxx LLM_MODEL=gpt-4o LLM_PROFILE=openai esp-agent start
 
 ## CLI 命令参考
 
-### esp-agent 管理命令
+### crush-claw 管理命令
 
-| 命令                                    | 说明                                       |
-| --------------------------------------- | ------------------------------------------ |
-| `esp-agent --help`                    | 显示桌面端帮助（含 esp-claw 内部命令列表） |
-| `esp-agent config`                    | 交互式配置向导（首次使用）                 |
-| `esp-agent start`                     | 后台启动 Agent，实时显示日志               |
-| `esp-agent stop`                      | 优雅停止 Agent                             |
-| `esp-agent restart`                   | 重启 Agent                                 |
-| `esp-agent status`                    | 检查 Agent 运行状态                        |
-| `esp-agent logs`                      | 查看 Agent 运行日志                        |
-| `esp-agent build`                     | 从源码编译（仅开发模式）                   |
-| `esp-agent clean`                     | 清理编译产物                               |
-| `esp-agent service enable`            | 启用 systemd 用户服务（登录自启）          |
-| `esp-agent service disable`           | 禁用 systemd 用户服务                      |
-| `esp-agent service start\|stop\|status` | systemd 服务控制                           |
-| `esp-agent --version`                 | 显示版本号                                 |
+| 命令                                      | 说明                                       |
+| ----------------------------------------- | ------------------------------------------ |
+| `crush-claw --help`                     | 显示桌面端帮助（含 esp-claw 内部命令列表） |
+| `crush-claw config`                     | 交互式配置向导（首次使用）                 |
+| `crush-claw start`                      | 后台启动 Agent，实时显示日志               |
+| `crush-claw stop`                       | 优雅停止 Agent                             |
+| `crush-claw restart`                    | 重启 Agent                                 |
+| `crush-claw status`                     | 检查 Agent 运行状态                        |
+| `crush-claw logs`                       | 查看 Agent 运行日志                        |
+| `crush-claw build`                      | 从源码编译（仅开发模式）                   |
+| `crush-claw clean`                      | 清理编译产物                               |
+| `crush-claw service enable`             | 启用 systemd 用户服务（登录自启）          |
+| `crush-claw service disable`            | 禁用 systemd 用户服务                      |
+| `crush-claw service start\|stop\|status`  | systemd 服务控制                           |
+| `crush-claw --version`                  | 显示版本号                                 |
 
 ### Agent 命令（直接转发）
 
-除上述管理命令以外，所有以 `esp-agent` 开头的命令都会直接转发给 Agent 内部 CLI
+除上述管理命令以外，所有以 `crush-claw` 开头的命令都会直接转发给 Agent 内部 CLI
 处理（通过 Unix Socket 单次请求-响应）。无需进入子 REPL。
 
 查看 Agent 内部帮助：
 
 ```bash
 # 显示桌面端帮助（管理命令 + Agent 内部命令列表）
-esp-agent --help
+crush-claw --help
 
 # 仅查看 esp-claw 内部的帮助（需 Agent 在运行）
-esp-agent esp-claw help
+crush-claw esp-claw help
 ```
 
-| 命令                                  | 说明                                         |
-| ------------------------------------- | -------------------------------------------- |
-| `esp-agent ask <prompt>`            | 提交多轮对话请求（使用当前会话）             |
-| `esp-agent ask_once <prompt>`       | 提交单轮对话请求（无会话历史）               |
-| `esp-agent session [id]`            | 查看或切换当前会话                           |
-| `esp-agent cap list`                | 列出所有已注册的能力 (~54项)                 |
-| `esp-agent cap groups`              | 列出所有能力分组 (13组)                      |
-| `esp-agent cap call <name> <json>`  | 直接调用指定能力（需传入 JSON，无参用 `{}`）  |
-| `esp-agent auto rules`              | 查看事件路由规则                             |
-| `esp-agent auto last`               | 查看最后一次路由结果                         |
-| `esp-agent auto reload`             | 重新加载路由规则                             |
-| `esp-agent lua --list`              | 列出可用的 Lua 脚本                          |
-| `esp-agent lua --run --path <file>` | 运行 Lua 脚本                                |
-| `esp-agent skill --catalog`         | 查看技能目录 (3项)                           |
-| `esp-agent skill --activate <name>` | 激活指定技能                                 |
-| `esp-agent hello`                   | 未知命令示例 — Agent 返回 "Unknown command" |
+| 命令                                    | 说明                                         |
+| --------------------------------------- | -------------------------------------------- |
+| `crush-claw ask <prompt>`            | 提交多轮对话请求（使用当前会话）             |
+| `crush-claw ask_once <prompt>`       | 提交单轮对话请求（无会话历史）               |
+| `crush-claw session [id]`            | 查看或切换当前会话                           |
+| `crush-claw cap list`                | 列出所有已注册的能力 (~54项)                 |
+| `crush-claw cap groups`              | 列出所有能力分组 (13组)                      |
+| `crush-claw cap call <name> <json>`  | 直接调用指定能力（需传入 JSON，无参用 `{}`）  |
+| `crush-claw auto rules`              | 查看事件路由规则                             |
+| `crush-claw auto last`               | 查看最后一次路由结果                         |
+| `crush-claw auto reload`             | 重新加载路由规则                             |
+| `crush-claw lua --list`              | 列出可用的 Lua 脚本                          |
+| `crush-claw lua --run --path <file>` | 运行 Lua 脚本                                |
+| `crush-claw skill --catalog`         | 查看技能目录 (3项)                           |
+| `crush-claw skill --activate <name>` | 激活指定技能                                 |
+| `crush-claw hello`                   | 未知命令示例 — Agent 返回 "Unknown command" |
 
 ## systemd 用户服务
 
-安装 `.deb` 包后，systemd 用户服务文件已位于 `/usr/lib/systemd/user/esp-agent.service`。
+安装 `.deb` 包后，systemd 用户服务文件已位于 `/usr/lib/systemd/user/crush-claw.service`。
 
 ```bash
 # 启用登录自动启动
-esp-agent service enable
+crush-claw service enable
 
 # 启动/停止/状态
-esp-agent service start
-esp-agent service stop
-esp-agent service status
+crush-claw service start
+crush-claw service stop
+crush-claw service status
 ```
 
 ## 数据目录
 
-所有运行时数据存储在 `~/.esp-agent/`：
+所有运行时数据存储在 `~/.crush-claw/`：
 
 ```
-~/.esp-agent/
+~/.crush-claw/
 ├── config.json              # Agent 配置
 ├── agent.sock               # CLI 连接用的 Unix Socket
 ├── agent.pid                # 进程 PID 文件
@@ -247,7 +247,7 @@ esp-agent service status
 ## 架构概览
 
 ```
-esp-agent/
+crush-claw/
 ├── esp-claw/            # 上游 esp-claw 仓库（只读，不修改）
 │   └── components/      # 原始 ESP32 源码
 ├── sim_hal/             # 桌面模拟层
@@ -263,7 +263,7 @@ esp-agent/
 │   └── cJSON.c          # JSON 解析库
 ├── main_desktop.c       # 桌面程序入口
 ├── CMakeLists.txt       # CMake 构建系统
-├── esp-agent            # CLI 管理脚本
+├── crush-claw           # CLI 管理脚本
 ├── package.sh           # .deb 打包脚本
 ├── packaging/           # Debian 包结构
 └── README.md
@@ -306,44 +306,44 @@ esp-agent/
 
 ```bash
 # 查看所有注册的能力
-esp-agent cap list
+crush-claw cap list
 
 # 向 LLM 发送消息
-esp-agent ask "你好，请介绍一下你自己"
+crush-claw ask "你好，请介绍一下你自己"
 
 # 让 Agent 操作文件
-esp-agent ask "请列出当前目录的所有文件"
+crush-claw ask "请列出当前目录的所有文件"
 
 # 让 Agent 记住信息
-esp-agent ask "请帮我记住：我最喜欢的颜色是蓝色"
+crush-claw ask "请帮我记住：我最喜欢的颜色是蓝色"
 
 # 运行 Lua 脚本
-esp-agent lua --run --path hello.lua
+crush-claw lua --run --path hello.lua
 
 # 查看系统信息（无参 cap call 需传入 {}）
-esp-agent 'cap call get_system_info {}'
-esp-agent 'cap call get_memory_info {}'
-esp-agent 'cap call get_cpu_usage {}'
+crush-claw 'cap call get_system_info {}'
+crush-claw 'cap call get_memory_info {}'
+crush-claw 'cap call get_cpu_usage {}'
 
 # 查看记忆
-esp-agent 'cap call memory_list {}'
+crush-claw 'cap call memory_list {}'
 
 # 有参数的 cap call（传入 JSON）
-esp-agent 'cap call scheduler_add {"cron":"0 */2 * * *","action":"run_lua script=hello.lua"}'
+crush-claw 'cap call scheduler_add {"cron":"0 */2 * * *","action":"run_lua script=hello.lua"}'
 
 # 切换会话
-esp-agent session my-new-session
+crush-claw session my-new-session
 ```
 
 ## 常见问题
 
 **Q: 启动时报 `Failed to start app_claw` 错误？**
 
-检查 `~/.esp-agent/` 目录权限是否正确。可以尝试删除该目录后重新运行。
+检查 `~/.crush-claw/` 目录权限是否正确。可以尝试删除该目录后重新运行。
 
 **Q: 执行命令时报 `Agent is not running`？**
 
-先运行 `esp-agent start` 启动服务，用 `esp-agent status` 确认状态。
+先运行 `crush-claw start` 启动服务，用 `crush-claw status` 确认状态。
 
 **Q: 没有设置 LLM API Key 能运行吗？**
 
@@ -351,7 +351,7 @@ esp-agent session my-new-session
 
 **Q: SDL2 窗口没有出现？**
 
-检查 `~/.esp-agent/config.json` 中 `display.enabled` 是否为 `true`。
+检查 `~/.crush-claw/config.json` 中 `display.enabled` 是否为 `true`。
 
 **Q: 如何切换不同的 LLM 服务商？**
 
@@ -361,9 +361,9 @@ esp-agent session my-new-session
 
 ```bash
 # 先停止所有运行中的实例
-esp-agent stop
+crush-claw stop
 # 卸载
-sudo apt remove esp-agent
+sudo apt remove crush-claw
 # 可选：删除用户数据
-rm -rf ~/.esp-agent
+rm -rf ~/.crush-claw
 ```

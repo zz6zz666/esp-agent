@@ -61,7 +61,7 @@ static void sim_touch_event_cb(gfx_touch_t *touch,
 # define EMOTE_ASSETS_DIR_INSTALLED "assets/284_240"
 #else
 # define EMOTE_ASSETS_DIR_DEV      "sim_hal/assets/284_240"
-# define EMOTE_ASSETS_DIR_INSTALLED "/usr/share/esp-agent/assets/284_240"
+# define EMOTE_ASSETS_DIR_INSTALLED "/usr/share/crush-claw/assets/284_240"
 #endif
 
 #include <sys/stat.h>

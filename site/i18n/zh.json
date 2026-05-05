@@ -61,7 +61,7 @@
     "step4": "将 <code>config.json</code> 发给对象 / Crush。",
     "client_intro": "对象 / Crush 收到文件后：",
     "client_step1": "将 <code>config.json</code> 复制进 <code>~/.crush-claw</code> 目录下替换原有文件（Windows：<code>C:\\Users\\用户\\.crush-claw</code>）。",
-    "client_step2": "在命令行执行 <code>esp-agent restart</code> 重启即可。",
+    "client_step2": "在命令行执行 <code>crush-claw restart</code> 重启即可。",
     "trust_title": "信任与安全提醒",
     "trust_desc": "你的 LLM API Key 会存储在对方的电脑上。双方需要互相信任：你不应该利用 Lua 脚本漏洞攻击对方的电脑，对方也不应盗用你的 Key。如果担心安全问题，也可以让对方注册自己的 LLM 平台 API Key。",
     "config_title": "配置文件模板",

@@ -39,7 +39,7 @@ framework and reports its status in the cross-platform (Linux + Windows) desktop
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Multi-turn conversation | Supported | Session history stored in `~/.esp-agent/sessions/` |
+| Multi-turn conversation | Supported | Session history stored in `~/.crush-claw/sessions/` |
 | Tool calling (function calling) | Supported | Anthropic + OpenAI-compatible |
 | Streaming responses | Supported | SSE over libcurl |
 | System prompts | Supported | Skills auto-loaded as system blocks |
@@ -99,7 +99,7 @@ framework and reports its status in the cross-platform (Linux + Windows) desktop
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Memory store | Supported | JSON file-based in `~/.esp-agent/memory/` |
+| Memory store | Supported | JSON file-based in `~/.crush-claw/memory/` |
 | Memory extract | Supported | Extracts structured data from conversations |
 | Memory recall | Supported | Context injection based on relevance |
 | Memory profile | Supported | User profile persistence |
@@ -113,7 +113,7 @@ framework and reports its status in the cross-platform (Linux + Windows) desktop
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Skill catalog | Supported | `~/.esp-agent/skills/skills_list.json` |
+| Skill catalog | Supported | `~/.crush-claw/skills/skills_list.json` |
 | Built-in skills | Supported | Lua runner (3 skills auto-created on first run) |
 | Skill registration | Supported | Dynamic register/unregister at runtime |
 | Skill activation | Supported | Skills auto-loaded as LLM system prompts |
@@ -125,8 +125,8 @@ framework and reports its status in the cross-platform (Linux + Windows) desktop
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Unix socket CLI | Supported | `~/.esp-agent/agent.sock`, one-shot request/response |
-| `esp-agent` CLI tool | Supported | Cross-platform management CLI (config, start, stop, status, logs, build, etc.). Linux: shell script; Windows: compiled C binary. |
+| Unix socket CLI | Supported | `~/.crush-claw/agent.sock`, one-shot request/response |
+| `crush-claw` CLI tool | Supported | Cross-platform management CLI (config, start, stop, status, logs, build, etc.). Linux: shell script; Windows: compiled C binary. |
 | Help command | Supported | All registered commands listed |
 | `ask <prompt>` | Supported | Multi-turn agent prompt via socket |
 | `ask_once <prompt>` | Supported | Single-turn prompt (no session) |
@@ -226,7 +226,7 @@ The module is registered at startup via `lua_module_display_register()`.
 | CLI `display on` | Supported | Open SDL2 window at runtime |
 | CLI `display off` | Supported | Close SDL2 window at runtime |
 | CLI `display status` | Supported | Query active/inactive state |
-| `esp-agent display on\|off\|status` | Supported | Forwarded over Unix socket |
+| `crush-claw display on\|off\|status` | Supported | Forwarded over Unix socket |
 | Window close button (X) | Supported | Auto-closes display, agent keeps running |
 | Re-create after close | Supported | `display on` re-opens window after X close |
 
@@ -267,7 +267,7 @@ respective APIs. They are untested in the simulator.
 
 | Capability | Status | Notes |
 |------------|--------|-------|
-| File read | Supported | Sandboxed to `~/.esp-agent/` |
+| File read | Supported | Sandboxed to `~/.crush-claw/` |
 | File write | Supported | Sandboxed |
 | File delete | Supported | Sandboxed |
 | File list/directory | Supported | Sandboxed |
@@ -280,15 +280,15 @@ respective APIs. They are untested in the simulator.
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| NVS init | Supported | Creates `~/.esp-agent/nvs.json` |
+| NVS init | Supported | Creates `~/.crush-claw/nvs.json` |
 | NVS read/write/erase | Supported | Full key-value API, cJSON-backed |
 | NVS namespace | Supported | Per-namespace key isolation |
 | NVS blob | Supported | Base64-encoded JSON blobs |
 | config.json | Supported | Read at startup, env var overrides |
 | Session persistence | Supported | `role\ttext` line format |
-| Memory persistence | Supported | JSON files in `~/.esp-agent/memory/` |
-| Skills persistence | Supported | `~/.esp-agent/skills/skills_list.json` |
-| Router rules persistence | Supported | `~/.esp-agent/router_rules/router_rules.json` |
+| Memory persistence | Supported | JSON files in `~/.crush-claw/memory/` |
+| Skills persistence | Supported | `~/.crush-claw/skills/skills_list.json` |
+| Router rules persistence | Supported | `~/.crush-claw/router_rules/router_rules.json` |
 
 ---
 
@@ -423,17 +423,17 @@ simulator build (`CONFIG_APP_CLAW_LUA_MODULE_*` defines not set):
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| CMake build (Release) | Supported | `esp-agent build` (Linux + Windows) |
+| CMake build (Release) | Supported | `crush-claw build` (Linux + Windows) |
 | CMake build (Debug) | Supported | `cmake -DCMAKE_BUILD_TYPE=Debug` |
 | `.deb` packaging (Linux) | Supported | `dpkg-buildpackage` |
 | `.zip` packaging (Windows) | Supported | `package.bat` with PowerShell |
-| systemd user service | Supported | Linux only; `esp-agent service enable\|start\|stop\|status` |
-| `esp-agent config` wizard | Supported | Interactive setup (cross-platform) |
-| `esp-agent clean` | Supported | Remove build/ directory |
+| systemd user service | Supported | Linux only; `crush-claw service enable\|start\|stop\|status` |
+| `crush-claw config` wizard | Supported | Interactive setup (cross-platform) |
+| `crush-claw clean` | Supported | Remove build/ directory |
 | `_run_desktop.sh` dev script | Supported | Linux foreground run |
 | `_run_desktop.bat` dev script | Supported | Windows quick launcher (run/build/debug/clean/daemon) |
 | Platform abstraction layer | Supported | `platform.h` / `platform_posix.h` / `platform_win32.h` |
-| Windows Named Pipe IPC | Supported | `\\.\pipe\esp-agent` replacing Unix socket |
+| Windows Named Pipe IPC | Supported | `\\.\pipe\crush-claw` replacing Unix socket |
 | MinGW-w64 (MSYS2) build | Supported | CMake + MinGW Makefiles generator |
 
 ---

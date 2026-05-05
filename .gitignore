@@ -28,7 +28,7 @@ _tmp*
 _temp*
 
 # Runtime data
-.esp-agent/
+.crush-claw/
 
 # CMake generated
 CMakeCache.txt

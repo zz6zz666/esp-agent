@@ -1,5 +1,5 @@
 /*
- * tray_icon.c — Windows system tray icon for esp-agent desktop simulator
+ * tray_icon.c — Windows system tray icon for Crush Claw desktop simulator
  *
  * Creates a hidden Win32 window to receive tray notification messages.
  * Provides a right-click popup menu (Show/Hide, Exit).
@@ -37,8 +37,8 @@ static HMENU  s_menu = NULL;
 #define IDI_CLAW     1
 
 #define REG_AUTOSTART_KEY "Software\\Microsoft\\Windows\\CurrentVersion\\Run"
-#define REG_AUTOSTART_VAL "esp-agent"
-#define REG_APP_KEY       "Software\\esp-agent"
+#define REG_AUTOSTART_VAL "crush-claw"
+#define REG_APP_KEY       "Software\\crush-claw"
 #define REG_ALWAYS_HIDE   "AlwaysHide"
 
 /* ---- Forward decls ---- */
@@ -56,7 +56,7 @@ bool tray_icon_init(void)
     WNDCLASSA wc = {0};
     wc.lpfnWndProc   = tray_wndproc;
     wc.hInstance     = GetModuleHandleA(NULL);
-    wc.lpszClassName = "EspAgentTrayClass";
+    wc.lpszClassName = "CrushClawTrayClass";
     wc.hCursor       = LoadCursor(NULL, IDC_ARROW);
     /* use a small system icon as fallback; the NOTIFYICONDATA also sets an icon */
     wc.hIcon         = LoadIconA(GetModuleHandleA(NULL), MAKEINTRESOURCEA(IDI_CLAW));
@@ -64,7 +64,7 @@ bool tray_icon_init(void)
     if (!RegisterClassA(&wc)) return false;
 
     s_tray_hwnd = CreateWindowExA(
-        0, "EspAgentTrayClass", "esp-agent Tray",
+        0, "CrushClawTrayClass", "crush-claw Tray",
         WS_OVERLAPPED, 0, 0, 1, 1,
         NULL, NULL, wc.hInstance, NULL);
 
@@ -78,7 +78,7 @@ bool tray_icon_init(void)
     s_nid.uFlags           = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     s_nid.uCallbackMessage = WM_TRAYICON;
     s_nid.hIcon            = LoadIconA(GetModuleHandleA(NULL), MAKEINTRESOURCEA(IDI_CLAW));
-    strncpy(s_nid.szTip, "esp-agent Desktop Simulator", sizeof(s_nid.szTip) - 1);
+    strncpy(s_nid.szTip, "Crush Claw Desktop Simulator", sizeof(s_nid.szTip) - 1);
 
     Shell_NotifyIconA(NIM_ADD, &s_nid);
 
@@ -178,17 +178,18 @@ void tray_icon_set_sdl_window(void *hwnd)
     /* Remove from taskbar — tray icon is the primary UI surface */
     LONG_PTR ex_style = GetWindowLongPtrA(s_sdl_hwnd, GWL_EXSTYLE);
     SetWindowLongPtrA(s_sdl_hwnd, GWL_EXSTYLE, ex_style | WS_EX_TOOLWINDOW);
-    /* Re-show to apply the style change */
+    /* Re-show to apply the style change, without stealing focus */
     ShowWindow(s_sdl_hwnd, SW_HIDE);
-    ShowWindow(s_sdl_hwnd, SW_SHOW);
-    SetForegroundWindow(s_sdl_hwnd);
+    ShowWindow(s_sdl_hwnd, SW_SHOWNOACTIVATE);
 }
 
 void tray_icon_show_window(void)
 {
     if (s_sdl_hwnd) {
-        ShowWindow(s_sdl_hwnd, SW_SHOW);
-        SetForegroundWindow(s_sdl_hwnd);
+        ShowWindow(s_sdl_hwnd, SW_SHOWNOACTIVATE);
+        /* Restore WS_EX_TOPMOST (stripped during hide) */
+        LONG exstyle = GetWindowLong(s_sdl_hwnd, GWL_EXSTYLE);
+        SetWindowLong(s_sdl_hwnd, GWL_EXSTYLE, exstyle | WS_EX_TOPMOST);
     }
     s_window_visible = true;
 }
@@ -196,6 +197,12 @@ void tray_icon_show_window(void)
 void tray_icon_hide_window(void)
 {
     if (s_sdl_hwnd) {
+        /* Strip WS_EX_TOPMOST so the OS releases focus and Z-order
+           cleanly — a hidden topmost window can still contend for
+           activation, causing ghost-border flashes and focus stealing. */
+        LONG exstyle = GetWindowLong(s_sdl_hwnd, GWL_EXSTYLE);
+        if (exstyle & WS_EX_TOPMOST)
+            SetWindowLong(s_sdl_hwnd, GWL_EXSTYLE, exstyle & ~WS_EX_TOPMOST);
         ShowWindow(s_sdl_hwnd, SW_HIDE);
     }
     s_window_visible = false;

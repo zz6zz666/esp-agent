@@ -148,9 +148,9 @@ For mDNS: `mdns_query_ptr()` should return `ESP_ERR_NOT_FOUND` (no services disc
 ## Verification
 
 After each step:
-1. `./esp-agent build` — compile cleanly
-2. `./esp-agent start && ./esp-agent 'cap call get_system_info {}'` — check logs for new groups
-3. `./esp-agent cap list` — verify new caps appear
+1. `./crush-claw build` — compile cleanly
+2. `./crush-claw start && ./crush-claw 'cap call get_system_info {}'` — check logs for new groups
+3. `./crush-claw cap list` — verify new caps appear
 
 Expected final: **+2 groups, +6 caps** (cap_mcp_client: 3 tools, cap_mcp_server: 3 tools).
 After both: **15 groups, ~60 capabilities**.

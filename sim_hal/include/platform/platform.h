@@ -24,9 +24,9 @@ extern "C" {
 #endif
 
 /*
- * Resolve the data directory for esp-agent.
- * On POSIX:   $HOME/.esp-agent/  (or $ESP_AGENT_DATA_DIR)
- * On Windows: %USERPROFILE%\.esp-agent\  (or %ESP_AGENT_DATA_DIR%)
+ * Resolve the data directory for Crush Claw.
+ * On POSIX:   $HOME/.crush-claw/  (or $CRUSH_CLAW_DATA_DIR)
+ * On Windows: %USERPROFILE%\.crush-claw\  (or %CRUSH_CLAW_DATA_DIR%)
  *
  * Caller provides a buffer of at least PLATFORM_MAX_PATH bytes.
  */

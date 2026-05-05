@@ -372,7 +372,7 @@
             <div class="arch-layer arch-os"><span class="arch-label">${t('security.arch_layer6')}</span></div>
           </div>
 
-          <p><a href="https://github.com/zz6zz666/esp-agent/blob/master/SANDBOX_SECURITY.md" target="_blank">${t('security.detail_link')}</a></p>
+          <p><a href="https://github.com/zz6zz666/crush-claw/blob/master/SANDBOX_SECURITY.md" target="_blank">${t('security.detail_link')}</a></p>
 
           <div class="warn"><strong>\u26a0\ufe0f ${t('security.trust_title')}</strong> ${t('security.trust_desc')}</div>
         </div>

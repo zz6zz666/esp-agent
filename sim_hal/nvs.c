@@ -28,7 +28,7 @@ static void nvs_ensure_loaded(void)
     if (s_nvs_json) return;
 
     char path[512];
-    snprintf(path, sizeof(path), "%s/.esp-agent/nvs.json", get_home_dir());
+    snprintf(path, sizeof(path), "%s/.crush-claw/nvs.json", get_home_dir());
     s_nvs_path = strdup(path);
 
     FILE *fp = fopen(path, "r");

@@ -1,5 +1,5 @@
 /*
- * esp_agent_cli.c — Management CLI tool for esp-agent daemon
+ * crush_claw_cli.c — Management CLI tool for Crush Claw daemon
  *
  * On Linux this is compiled as a shell-script frontend; on Windows it's a
  * compiled C tool that communicates with the daemon via Named Pipe.
@@ -21,7 +21,7 @@
 # include <direct.h>
 # include <io.h>
 # include <tlhelp32.h>
-# define PIPE_NAME  "\\\\.\\pipe\\esp-agent"
+# define PIPE_NAME  "\\\\.\\pipe\\crush-claw"
 #else
 # include <errno.h>
 # include <signal.h>
@@ -246,7 +246,7 @@ static int forward_to_agent(const char *cmd)
 #else
     if ((int)(intptr_t)conn == INVALID_CONN) {
 #endif
-        fprintf(stderr, "Agent is not running. Start it with: esp-agent start\n");
+        fprintf(stderr, "Agent is not running. Start it with: crush-claw start\n");
         return 1;
     }
 
@@ -266,7 +266,7 @@ static int forward_to_agent(const char *cmd)
 static int cmd_config(int argc, char **argv)
 {
     (void)argc; (void)argv;
-    printf("=== esp-agent Configuration Wizard ===\n\n");
+    printf("=== Crush Claw Configuration Wizard ===\n\n");
 
     char config_path[512];
     get_config_path(config_path, sizeof(config_path));
@@ -382,7 +382,7 @@ static int cmd_start(int argc, char **argv)
     char exe_path[512];
 
 #if defined(_WIN32)
-    /* Try alongside esp-agent.exe, then PATH */
+    /* Try alongside crush-claw.exe, then PATH */
     GetModuleFileNameA(NULL, exe_path, sizeof(exe_path));
     char *slash = strrchr(exe_path, '\\');
     if (slash) {
@@ -395,7 +395,7 @@ static int cmd_start(int argc, char **argv)
         snprintf(exe_path, sizeof(exe_path), ".\\%s", AGENT_EXE);
     }
     if (GetFileAttributesA(exe_path) == INVALID_FILE_ATTRIBUTES) {
-        fprintf(stderr, "Cannot find %s. Run 'esp-agent build' first.\n", AGENT_EXE);
+        fprintf(stderr, "Cannot find %s. Run 'crush-claw build' first.\n", AGENT_EXE);
         return 1;
     }
 
@@ -445,7 +445,7 @@ static int cmd_start(int argc, char **argv)
 
 #else
     /* POSIX: use existing shell script approach */
-    fprintf(stderr, "Use the esp-agent shell script on Linux.\n");
+    fprintf(stderr, "Use the crush-claw shell script on Linux.\n");
     return 1;
 #endif
 }
@@ -521,7 +521,7 @@ static int cmd_status(int argc, char **argv)
 {
     (void)argc; (void)argv;
 
-    printf("esp-agent v%s\n\n", VERSION);
+    printf("crush-claw v%s\n\n", VERSION);
 
     /* Check daemon */
     if (pid_file_exists()) {
@@ -562,7 +562,7 @@ static int cmd_status(int argc, char **argv)
     if (platform_file_exists(config_path)) {
         printf("Config: %s\n", config_path);
     } else {
-        printf("Config: not found (run 'esp-agent config')\n");
+        printf("Config: not found (run 'crush-claw config')\n");
     }
 
     /* Check data dir */
@@ -639,7 +639,7 @@ static int cmd_service(int argc, char **argv)
     (void)argc; (void)argv;
 #if defined(_WIN32)
     printf("Service management is not supported on Windows.\n");
-    printf("Use 'esp-agent start' / 'esp-agent stop' instead.\n");
+    printf("Use 'crush-claw start' / 'crush-claw stop' instead.\n");
 #else
     printf("Use systemctl --user for service management.\n");
 #endif
@@ -675,7 +675,7 @@ static int cmd_help(int argc, char **argv)
 {
     (void)argc; (void)argv;
 
-    printf("esp-agent v%s — CLI management tool\n\n", VERSION);
+    printf("crush-claw v%s — CLI management tool\n\n", VERSION);
     printf("Management commands (handled locally):\n");
     for (size_t i = 0; i < s_cmd_count; i++) {
         printf("  %-12s %s\n", s_cmds[i].name, s_cmds[i].desc);
