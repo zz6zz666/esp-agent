@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Crush Agent</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<div class="layout">
+  <!-- Sidebar -->
+  <nav class="sidebar">
+    <div class="sidebar-header">
+      <h1 class="logo">🦞 Crush Agent</h1>
+      <p class="tagline" data-i18n="tagline">A safe, lovely desktop companion for two.</p>
+    </div>
+    <ul class="nav" id="nav">
+      <li class="nav-item active" data-tab="overview"><span data-i18n="nav.overview">Overview</span></li>
+      <li class="nav-item" data-tab="guide"><span data-i18n="nav.guide">Guide</span></li>
+      <li class="nav-item" data-tab="security"><span data-i18n="nav.security">Security</span></li>
+      <li class="nav-item" data-tab="faq"><span data-i18n="nav.faq">FAQ</span></li>
+    </ul>
+    <div class="sidebar-footer">
+      <button class="lang-btn" id="langBtn">中文</button>
+      <a class="github-link" href="https://github.com/zz6zz666/esp-agent" target="_blank">GitHub</a>
+    </div>
+  </nav>
+
+  <!-- Content -->
+  <main class="content" id="content">
+    <!-- injected by JS -->
+  </main>
+</div>
+
+<script src="i18n/en.json" id="i18n-en" type="application/json"></script>
+<script src="i18n/zh.json" id="i18n-zh" type="application/json"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,72 @@
+{
+  "tagline": "A safe, lovely desktop companion for two.",
+  "nav": {
+    "overview": "Overview",
+    "guide": "Guide",
+    "security": "Security",
+    "faq": "FAQ"
+  },
+  "overview": {
+    "title": "A little lobster, on someone's desktop.",
+    "subtitle": "Crush Agent runs on your partner's computer — you control a cute baby lobster through AI. Draw hearts, confess love, play mini-games. It's your secret window into their screen.",
+    "feature1": "Lobster Pet",
+    "feature1_desc": "A cute desktop lobster powered by the emote engine, always-on-top. Your partner can keep it visible or collapse it as they like.",
+    "feature2": "Remote Drawing",
+    "feature2_desc": "Say \"draw a heart\" and AI uses Lua scripts to paint on their screen. The drawing window pops up automatically even when the pet is hidden.",
+    "feature3": "Sandbox Security",
+    "feature3_desc": "Lua engine runs in a fully isolated sandbox — no io, no os, no debug, 10MB memory limit, path-anchored storage. See the Security page for details.",
+    "feature4": "Keyboard & Mouse",
+    "feature4_desc": "Drawings and mini-games support interactive input. Your partner can click and type to respond.",
+    "feature5": "Smart Windows",
+    "feature5_desc": "The emote pet window stays on top. When your partner minimizes it, Lua drawing still pops up. When drawing ends, the pet returns to its previous state.",
+    "feature6": "Cross-platform",
+    "feature6_desc": "Windows 10+ and Linux. One installer, zero configuration for your partner.",
+    "how_title": "How it works",
+    "flow": "You                    Your partner's computer\n  │                          │\n  ├─ idle → ──────── pet window minimized or on-top\n  │                        └─ your partner decides\n  │\n  ├─ \"draw a heart\" ── pet stays or hides\n  │                        └─ Lua drawing window pops up\n  │                        └─ full-screen canvas\n  │                        └─ keyboard/mouse interactive\n  │                        └─ drawing done → window closes\n  │                        └─ pet restores previous state\n  │\n  └─ too annoying ──── right-click taskbar \"always hide\"\n                        └─ (hope you never reach this)",
+    "trust_title": "Trust matters",
+    "trust_desc": "Your LLM API key is stored on your partner's computer. Both parties need mutual trust. Don't exploit Lua to attack their machine. They shouldn't steal your key either."
+  },
+  "guide": {
+    "title": "Usage Guide",
+    "server_title": "For you (the remote controller)",
+    "step1": "Install Crush Agent on your partner's computer (one-click installer).",
+    "step2": "Create a config.json with your LLM API key and IM channel token.",
+    "step3": "Send the config file to your partner and place it in %USERPROFILE%\\.crush-agent\\",
+    "step4": "They start esp-agent. You send a message via IM. The lobster comes to life.",
+    "client_title": "For your partner (the one with the lobster)",
+    "client_step1": "Download and run the installer. That's it — no account needed.",
+    "client_step2": "Place the config.json file you received into the data directory.",
+    "client_step3": "Launch Crush Agent from the Start menu or desktop shortcut. The little lobster will appear on your screen.",
+    "config_title": "Configuration file",
+    "config_example": "{\n  \"llm\": {\n    \"api_key\": \"sk-your-key\",\n    \"model\": \"gpt-4o\",\n    \"profile\": \"openai\"\n  },\n  \"channels\": {\n    \"telegram\": {\n      \"enabled\": true,\n      \"bot_token\": \"your-bot-token\"\n    }\n  }\n}"
+  },
+  "security": {
+    "title": "Security",
+    "intro": "Crush Agent takes sandbox security extremely seriously. Since the product runs on someone else's computer, all Lua scripts execute in a deeply isolated environment.",
+    "sandbox_title": "Attack Vector Matrix",
+    "vector": "Attack Vector",
+    "status": "Status",
+    "risk": "Risk",
+    "blocked": "BLOCKED",
+    "critical": "Critical",
+    "high": "High",
+    "medium": "Medium",
+    "low": "Low",
+    "arch_title": "Architecture",
+    "arch": "┌──────────────────────────────────────────┐\n│              Lua User Script                │\n├──────────────────────────────────────────┤\n│       _G metatables (storage/cap wrap)    │\n├──────────────────────────────────────────┤\n│      Sanitized _G (io/os/debug removed)  │\n├──────────────────────────────────────────┤\n│            luaL_openlibs (raw load)       │\n├──────────────────────────────────────────┤\n│       C-level hook + 10MB allocator      │\n├──────────────────────────────────────────┤\n│               OS Kernel                    │\n└──────────────────────────────────────────┘",
+    "detail_link": "Read the full sandbox security whitepaper (SANDBOX_SECURITY.md)",
+    "trust_title": "Trust consideration",
+    "trust_desc": "This is a trust-based product. Your API key lives on someone else's machine. Do not use it with people you don't fully trust. Do not try to bypass the sandbox and attack their computer."
+  },
+  "faq": {
+    "title": "FAQ",
+    "q1": "How do I start?",
+    "a1": "Install the program on your partner's computer, create a config.json with your API key and IM token, send it to them, and they launch the app. Then send a message through the IM channel — the AI will control the lobster.",
+    "q2": "Is it safe for my partner's computer?",
+    "a2": "The Lua sandbox has been designed with security as the #1 priority. All dangerous operations are blocked at the C level (not just hidden from Lua). See the Security page for the full attack vector matrix.",
+    "q3": "Can the lobster be hidden?",
+    "a3": "Yes. Your partner can minimize the emote window at any time. It can also be permanently hidden via the taskbar context menu. Lua drawing windows will still pop up independently when the AI draws.",
+    "q4": "How do I set up the IM channel?",
+    "a4": "Create a Telegram bot (or QQ bot, WeChat bot, etc.), get the token, put it in config.json. The agent connects to the IM platform and listens for messages from you."
+  }
+}
