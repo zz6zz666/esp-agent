@@ -634,38 +634,6 @@ static int cmd_logs(int argc, char **argv)
     return 0;
 }
 
-static int cmd_build(int argc, char **argv)
-{
-    (void)argc; (void)argv;
-
-#if defined(_WIN32)
-    printf("Building esp-claw-desktop...\n");
-    platform_mkdir("build");
-    int rc = system("cd build && cmake .. -G \"MinGW Makefiles\" -DCMAKE_BUILD_TYPE=Release && mingw32-make -j4");
-    return rc == 0 ? 0 : 1;
-#else
-    printf("Building esp-claw-desktop...\n");
-    platform_mkdir("build");
-    int rc = system("cd build && cmake .. -DCMAKE_BUILD_TYPE=Release && make -j$(nproc)");
-    return rc == 0 ? 0 : 1;
-#endif
-}
-
-static int cmd_clean(int argc, char **argv)
-{
-    (void)argc; (void)argv;
-    printf("Cleaning build directory...\n");
-
-#if defined(_WIN32)
-    int rc = system("rmdir /s /q build 2>nul");
-#else
-    int rc = system("rm -rf build");
-#endif
-    (void)rc;
-    printf("Done.\n");
-    return 0;
-}
-
 static int cmd_service(int argc, char **argv)
 {
     (void)argc; (void)argv;
@@ -696,8 +664,6 @@ static const cmd_entry_t s_cmds[] = {
     {"restart",  "Stop then start the agent",          cmd_restart, true},
     {"status",   "Check if agent is running",          cmd_status,  true},
     {"logs",     "Tail the agent log file",            cmd_logs,    true},
-    {"build",    "Compile the binary (Release)",       cmd_build,   true},
-    {"clean",    "Remove build/ directory",            cmd_clean,   true},
     {"service",  "Service management (Linux only)",    cmd_service, true},
     {"help",     "Show this help",                     cmd_help,    true},
     {NULL, NULL, NULL, false}
