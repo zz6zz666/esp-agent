@@ -31,15 +31,15 @@ Crush Claw 运行在你对象（或朋友、伴侣）的电脑上，你通过 AI
 
 ## 特色
 
-| 特性 | 说明 |
-|------|------|
-| 🦞 **小龙虾动画** | Emote 动画引擎驱动的桌面吉祥物，支持多种情绪和动作 |
-| 🎨 **远程绘画** | AI 通过 Lua 脚本在对方的屏幕上绘制图案、文字、小游戏 |
-| 🛡️ **沙盒安全** | Lua 脚本引擎完全隔离（`io/os/load/stdin` 全部封禁，10MB 内存硬限制，路径锚定）|
-| ⌨️ **键鼠交互** | 支持键盘和鼠标输入，小龙虾可以回应互动 |
-| 🪟 **双窗口智能显隐** | 小龙虾桌宠始终置顶常伴；折叠后不影响绘图弹窗；绘图结束自动恢复 |
-| 🌐 **多 IM 渠道** | QQ、Telegram、微信、飞书、Web IM 均可接入 |
-| 💻 **跨平台** | Windows + Linux |
+| 特性                       | 说明                                                                             |
+| -------------------------- | -------------------------------------------------------------------------------- |
+| 🦞**小龙虾动画**     | Emote 动画引擎驱动的桌面吉祥物，支持多种情绪和动作                               |
+| 🎨**远程绘画**       | AI 通过 Lua 脚本在对方的屏幕上绘制图案、文字、小游戏                             |
+| 🛡️**沙盒安全**     | Lua 脚本引擎完全隔离（`io/os/load/stdin` 全部封禁，10MB 内存硬限制，路径锚定） |
+| ⌨️**键鼠交互**     | 支持键盘和鼠标输入，小龙虾可以回应互动                                           |
+| 🪟**双窗口智能显隐** | 小龙虾桌宠始终置顶常伴；折叠后不影响绘图弹窗；绘图结束自动恢复                   |
+| 🌐**多 IM 渠道**     | QQ、Telegram、微信、飞书、Web IM 均可接入                                        |
+| 💻**跨平台**         | Windows + Linux                                                                  |
 
 ---
 
@@ -60,17 +60,52 @@ REM 把你的 LLM Token 和 IM Channel Key 写入 config.json
 ```json
 {
   "llm": {
-    "api_key": "sk-your-key-here",
-    "model": "gpt-4o",
-    "profile": "openai"
+    "api_key": "sk-d**********************c",
+    "model": "deepseek-v4-flash",
+    "profile": "anthropic",
+    "base_url": "https://api.deepseek.com/anthropic",
+    "auth_type": "",
+    "timeout_ms": "120000",
+    "max_tokens": "409600"
   },
   "channels": {
-    "telegram": {
+    "local_im": {
+      "enabled": true
+    },
+    "qq": {
       "enabled": true,
-      "bot_token": "your-bot-token"
+      "app_id": "1*******4",
+      "app_secret": "J4********************Pg"
+    },
+    "telegram": {
+      "enabled": false,
+      "bot_token": ""
+    },
+    "feishu": {
+      "enabled": false,
+      "app_id": "",
+      "app_secret": ""
+    },
+    "wechat": {
+      "enabled": false,
+      "token": "",
+      "base_url": "",
+      "cdn_base_url": "",
+      "account_id": ""
     }
+  },
+  "search": {
+    "brave_key": "",
+    "tavily_key": ""
+  },
+  "display": {
+    "enabled": true,
+    "lcd_width": 480,
+    "lcd_height": 480,
+	"emote_text": "zz6zz666!"
   }
 }
+
 ```
 
 ### 启动
@@ -107,6 +142,7 @@ esp-agent start
 详细参看 [SANDBOX_SECURITY.md](SANDBOX_SECURITY.md)。
 
 > ⚠️ **重要须知**：使用 Crush Claw 需要双方相互信任。你的 LLM API Key 和 Channel Token 会存储在对方的电脑上。请确保：
+>
 > 1. 你不会恶意利用 Lua 脚本寻找漏洞攻击对方电脑
 > 2. 对方不会盗用你的 API Key
 > 3. 沙箱机制目前较为完善，但不排除存在尚未检测到的漏洞
@@ -115,19 +151,19 @@ esp-agent start
 
 ## CLI 命令
 
-| 命令 | 说明 |
-|------|------|
-| `esp-agent config` | 交互式配置向导 |
-| `esp-agent start` | 后台启动 Agent |
-| `esp-agent stop` | 停止 Agent |
-| `esp-agent restart` | 重启 Agent |
-| `esp-agent status` | 查看运行状态 |
-| `esp-agent logs` | 查看日志 |
-| `esp-agent service enable\|disable` | 开机自启管理 |
-| `esp-agent --help` | 查看全部命令 |
-| `esp-agent ask "你好"` | 远程对话 |
-| `esp-agent lua --run --path demo.lua` | 运行 Lua 脚本 |
-| `esp-agent cap list` | 查看能力列表 |
+| 命令                                    | 说明           |
+| --------------------------------------- | -------------- |
+| `esp-agent config`                    | 交互式配置向导 |
+| `esp-agent start`                     | 后台启动 Agent |
+| `esp-agent stop`                      | 停止 Agent     |
+| `esp-agent restart`                   | 重启 Agent     |
+| `esp-agent status`                    | 查看运行状态   |
+| `esp-agent logs`                      | 查看日志       |
+| `esp-agent service enable\|disable`    | 开机自启管理   |
+| `esp-agent --help`                    | 查看全部命令   |
+| `esp-agent ask "你好"`                | 远程对话       |
+| `esp-agent lua --run --path demo.lua` | 运行 Lua 脚本  |
+| `esp-agent cap list`                  | 查看能力列表   |
 
 ---
 
