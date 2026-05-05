@@ -24,6 +24,7 @@ WizardStyle=modern
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=admin
+CloseApplications=no
 UsePreviousTasks=no
 UninstallDisplayIcon={app}\{#MyAppExeName}
 SetupIconFile={#SourcePath}\assets\lobster.ico
@@ -102,10 +103,9 @@ Source: "..\sim_hal\assets\284_240\*"; DestDir: "{app}\assets\284_240"; Flags: i
 Source: "..\defaults\*"; DestDir: "{app}\defaults"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\{#MyAppName} Agent"; Filename: "{app}\{#MyAgentExeName}"; Parameters: "--foreground"; Comment: "Start esp-agent desktop simulator"
-Name: "{group}\{#MyAppName} CLI"; Filename: "{cmd}"; Parameters: "/k ""{app}\{#MyAppExeName}"" help"; Comment: "Open a terminal with esp-agent commands"
+Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAgentExeName}"; Parameters: "--daemon"; Comment: "Start esp-agent desktop simulator"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
-Name: "{commondesktop}\{#MyAppName}"; Filename: "{app}\{#MyAgentExeName}"; Parameters: "--foreground"; Tasks: desktopicon
+Name: "{commondesktop}\{#MyAppName}"; Filename: "{app}\{#MyAgentExeName}"; Parameters: "--daemon"; Tasks: desktopicon
 
 [Registry]
 ; Add to PATH (per-machine) — only if user selected the task
@@ -148,9 +148,24 @@ var
 begin
   NeedsRestart := False;
   Result := '';
+
+  { Graceful stop via CLI }
   if FileExists(ExpandConstant('{app}\{#MyAppExeName}')) then
   begin
     Exec(ExpandConstant('{app}\{#MyAppExeName}'), 'stop',
          '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   end;
+
+  { Graceful stop of the daemon directly (taskkill /im without /f sends WM_CLOSE) }
+  Exec('taskkill', '/im esp-claw-desktop.exe /t',
+       '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+
+  { Wait for processes to release file handles }
+  Sleep(500);
+
+  { Force kill if still hanging (should not normally happen) }
+  Exec('taskkill', '/f /im esp-claw-desktop.exe /t',
+       '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec('taskkill', '/f /im esp-agent.exe /t',
+       '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;

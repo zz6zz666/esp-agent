@@ -66,7 +66,50 @@ typedef struct {
 # define WIN32_LEAN_AND_MEAN
 # include <windows.h>
 # include <wlanapi.h>
+# include <stdlib.h>
 # pragma comment(lib, "wlanapi.lib")
+
+/* Missing defines for newer auth algorithms (safe for older SDKs) */
+#ifndef DOT11_AUTH_ALGO_WPA3
+# define DOT11_AUTH_ALGO_WPA3     ((DOT11_AUTH_ALGORITHM)8)
+#endif
+#ifndef DOT11_AUTH_ALGO_WPA3_ENT
+# define DOT11_AUTH_ALGO_WPA3_ENT ((DOT11_AUTH_ALGORITHM)9)
+#endif
+#ifndef DOT11_AUTH_ALGO_OWE
+# define DOT11_AUTH_ALGO_OWE      ((DOT11_AUTH_ALGORITHM)10)
+#endif
+
+/* Frequency (MHz) to 802.11 channel number */
+static inline uint8_t _wifi_freq_to_channel(ULONG freqMHz) {
+    if (freqMHz == 2484) return 14;
+    if (freqMHz >= 2412 && freqMHz <= 2472)
+        return (uint8_t)((freqMHz - 2412) / 5 + 1);
+    if (freqMHz >= 5180 && freqMHz <= 5885)
+        return (uint8_t)((freqMHz - 5000) / 5);
+    return 0;
+}
+
+/* Map DOT11_AUTH_ALGORITHM to wifi_auth_mode_t.
+   Use int for switch to handle values beyond the SDK's enum. */
+static inline wifi_auth_mode_t _wifi_auth_to_mode(DOT11_AUTH_ALGORITHM algo) {
+    switch ((int)algo) {
+    case DOT11_AUTH_ALGO_80211_OPEN:       return WIFI_AUTH_OPEN;
+    case DOT11_AUTH_ALGO_80211_SHARED_KEY: return WIFI_AUTH_WEP;
+    case DOT11_AUTH_ALGO_WPA:              return WIFI_AUTH_WPA_PSK;
+    case DOT11_AUTH_ALGO_WPA_PSK:          return WIFI_AUTH_WPA_PSK;
+    case DOT11_AUTH_ALGO_WPA_NONE:         return WIFI_AUTH_WPA_PSK;
+    case DOT11_AUTH_ALGO_RSNA:             return WIFI_AUTH_WPA2_PSK;
+    case DOT11_AUTH_ALGO_RSNA_PSK:         return WIFI_AUTH_WPA2_PSK;
+    case 8:  return WIFI_AUTH_WPA3_PSK;       /* DOT11_AUTH_ALGO_WPA3 */
+    case 9:  return WIFI_AUTH_WPA2_ENTERPRISE; /* DOT11_AUTH_ALGO_WPA3_ENT */
+    case 10: return WIFI_AUTH_WPA3_PSK;        /* DOT11_AUTH_ALGO_OWE */
+    default: return WIFI_AUTH_OPEN;
+    }
+}
+
+/* Channel cache shared by _wifi_fill_ap_info and esp_wifi_get_channel */
+static struct { int valid; uint8_t primary; wifi_second_chan_t second; } _wifi_chan_cache;
 
 /* WLAN API wrapper */
 static inline HANDLE _wifi_wlan_open(void) {
@@ -74,16 +117,16 @@ static inline HANDLE _wifi_wlan_open(void) {
     HANDLE hClient = NULL;
     DWORD ret = WlanOpenHandle(2, NULL, &negotiatedVersion, &hClient);
     if (ret == ERROR_SERVICE_NOT_ACTIVE || ret != ERROR_SUCCESS) {
-        /* Try version 1 */
         ret = WlanOpenHandle(1, NULL, &negotiatedVersion, &hClient);
     }
     return (ret == ERROR_SUCCESS) ? hClient : NULL;
 }
 
-/* Helper: find first wireless interface and fill SSID / RSSI */
+/* Helper: find first wireless interface and fill all AP info fields */
 static inline int _wifi_fill_ap_info(wifi_ap_record_t *info)
 {
     memset(info, 0, sizeof(*info));
+    _wifi_chan_cache.valid = 0;
 
     HANDLE hClient = _wifi_wlan_open();
     if (!hClient) return 0;
@@ -99,39 +142,53 @@ static inline int _wifi_fill_ap_info(wifi_ap_record_t *info)
         PWLAN_INTERFACE_INFO pIfInfo = &pIfList->InterfaceInfo[i];
         if (pIfInfo->isState != wlan_interface_state_connected) continue;
 
-        /* Get network BSS list for RSSI */
+        /* --- Primary path: BSS list (best accuracy) --- */
         PWLAN_BSS_LIST pBssList = NULL;
         if (WlanGetNetworkBssList(hClient, &pIfInfo->InterfaceGuid,
                 NULL, dot11_BSS_type_infrastructure, TRUE, NULL,
                 &pBssList) == ERROR_SUCCESS && pBssList->dwNumberOfItems > 0) {
             WLAN_BSS_ENTRY *bss = &pBssList->wlanBssEntries[0];
+
             info->rssi = bss->lRssi;
 
-            /* Copy SSID */
             size_t ssid_len = bss->dot11Ssid.uSSIDLength;
             if (ssid_len > 32) ssid_len = 32;
             memcpy(info->ssid, bss->dot11Ssid.ucSSID, ssid_len);
             info->ssid[ssid_len] = '\0';
 
+            memcpy(info->bssid, bss->dot11Bssid, 6);
+
+            info->primary = _wifi_freq_to_channel(bss->ulChCenterFrequency);
+            _wifi_chan_cache.primary = info->primary;
+            _wifi_chan_cache.second = WIFI_SECOND_CHAN_NONE;
+            _wifi_chan_cache.valid = 1;
+
             found = 1;
             WlanFreeMemory(pBssList);
         }
 
-        /* Fallback: try to get SSID from connection attributes */
-        if (!found) {
+        /* --- Always query connection attributes for auth mode --- */
+        {
             PWLAN_CONNECTION_ATTRIBUTES pConnAttr = NULL;
             DWORD attrSize = sizeof(WLAN_CONNECTION_ATTRIBUTES);
             if (WlanQueryInterface(hClient, &pIfInfo->InterfaceGuid,
                     wlan_intf_opcode_current_connection, NULL,
                     &attrSize, (PVOID *)&pConnAttr, NULL) == ERROR_SUCCESS) {
                 if (pConnAttr && pConnAttr->isState == wlan_interface_state_connected) {
-                    PWLAN_ASSOCIATION_ATTRIBUTES assoc = &pConnAttr->wlanAssociationAttributes;
-                    size_t ssid_len = assoc->dot11Ssid.uSSIDLength;
-                    if (ssid_len > 32) ssid_len = 32;
-                    memcpy(info->ssid, assoc->dot11Ssid.ucSSID, ssid_len);
-                    info->ssid[ssid_len] = '\0';
-                    info->rssi = assoc->wlanSignalQuality / 2 - 100; /* approx */
-                    found = 1;
+                    info->authmode = _wifi_auth_to_mode(
+                        pConnAttr->wlanSecurityAttributes.dot11AuthAlgorithm);
+
+                    /* Fallback: BSS list failed — get everything from assoc */
+                    if (!found) {
+                        PWLAN_ASSOCIATION_ATTRIBUTES assoc = &pConnAttr->wlanAssociationAttributes;
+                        size_t ssid_len = assoc->dot11Ssid.uSSIDLength;
+                        if (ssid_len > 32) ssid_len = 32;
+                        memcpy(info->ssid, assoc->dot11Ssid.ucSSID, ssid_len);
+                        info->ssid[ssid_len] = '\0';
+                        info->rssi = (int8_t)(assoc->wlanSignalQuality / 2 - 100);
+                        memcpy(info->bssid, assoc->dot11Bssid, 6);
+                        found = 1;
+                    }
                 }
                 WlanFreeMemory(pConnAttr);
             }
@@ -266,9 +323,20 @@ static inline int8_t esp_wifi_sta_get_rssi(void) {
 }
 
 static inline esp_err_t esp_wifi_get_channel(uint8_t *primary, wifi_second_chan_t *secondary) {
+#if defined(PLATFORM_WINDOWS)
+    if (_wifi_chan_cache.valid) {
+        if (primary) *primary = _wifi_chan_cache.primary;
+        if (secondary) *secondary = _wifi_chan_cache.second;
+    } else {
+        if (primary) *primary = 1;
+        if (secondary) *secondary = WIFI_SECOND_CHAN_NONE;
+    }
+    return ESP_OK;
+#else
     if (primary) *primary = 1;
     if (secondary) *secondary = WIFI_SECOND_CHAN_NONE;
     return ESP_OK;
+#endif
 }
 
 #ifdef __cplusplus
