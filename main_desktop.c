@@ -29,6 +29,7 @@
 #include "app_claw.h"
 #include "app_capabilities.h"
 #include "cap_cli.h"
+#include "cap_lua_sandbox.h"
 #include "cJSON.h"
 #include "component_desktop.h"
 #include "claw_core.h"
@@ -440,6 +441,13 @@ int main(int argc, char **argv)
 {
 #if defined(PLATFORM_WINDOWS)
     SetProcessDPIAware();
+
+    /* Attach to parent console (foreground mode from terminal).
+       With WIN32 GUI subsystem this is the only way to get stdout.
+       When launched from Explorer, AttachConsole fails harmlessly
+       and no console window appears. */
+    AttachConsole(ATTACH_PARENT_PROCESS);
+
     SetConsoleOutputCP(CP_UTF8);
     /* Enable ANSI escape codes on Windows 10+ */
     {
@@ -556,6 +564,38 @@ int main(int argc, char **argv)
             snprintf(g_pid_file_path, sizeof(g_pid_file_path),
                      "%s/agent.pid", abs_data_dir);
         }
+
+        /* ---- Instance check ---- */
+        {
+            FILE *pf = fopen(g_pid_file_path, "r");
+            if (pf) {
+                unsigned long pid = 0;
+                fscanf(pf, "%lu", &pid);
+                fclose(pf);
+                if (pid != 0) {
+#if defined(PLATFORM_WINDOWS)
+                    HANDLE h = OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, (DWORD)pid);
+                    if (h) {
+                        DWORD code;
+                        bool alive = GetExitCodeProcess(h, &code) && code == STILL_ACTIVE;
+                        CloseHandle(h);
+                        if (alive) {
+                            ESP_LOGI(TAG, "Already running (PID %lu), exiting", pid);
+                            return 0;
+                        }
+                    }
+#else
+                    if (kill((pid_t)pid, 0) == 0) {
+                        ESP_LOGI(TAG, "Already running (PID %lu), exiting", (unsigned long)pid);
+                        return 0;
+                    }
+#endif
+                }
+                /* Stale PID — remove it and continue */
+                safe_unlink(g_pid_file_path);
+            }
+        }
+
         daemonize(log_path);
     } else {
         if (g_pid_file_path[0]) write_pid_file();
@@ -916,8 +956,9 @@ int main(int argc, char **argv)
         }
     }
 
-    /* Register desktop input Lua module (before modules lock) */
+    /* Register desktop-specific Lua modules (before modules lock) */
     lua_module_input_register();
+    cap_lua_sandbox_init(abs_data_dir);
 
 #if defined(PLATFORM_WINDOWS)
     if (!getenv("TZ")) {
