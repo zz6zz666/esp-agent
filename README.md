@@ -5,7 +5,7 @@
 <h1 align="center">🦞 Crush Claw</h1>
 
 <p align="center">
-  <a href="https://zz6zz666.github.io/crush-claw" target="_blank">🌐 官网</a>
+  <a href="https://crush-claw.pages.dev" target="_blank">🌐 官网</a>
   ·
   <a href="https://github.com/zz6zz666/crush-claw" target="_blank">GitHub</a>
 </p>
