@@ -1,12 +1,20 @@
-# 🦞 Crush Claw
+<p align="center">
+  <img src="claw-animation.svg" alt="Crush Claw" width="200">
+</p>
+
+<h1 align="center">🦞 Crush Claw</h1>
+
+<p align="center">
+  <a href="https://zz6zz666.github.io/crush-claw" target="_blank">🌐 官网</a>
+  ·
+  <a href="https://github.com/zz6zz666/crush-claw" target="_blank">GitHub</a>
+</p>
 
 > 一个安全、可爱、属于两个人的桌面小伙伴。
 
 Crush Claw 运行在你对象（或朋友、伴侣）的电脑上，你通过 AI 可以远程控制屏幕上的一只小龙虾 —— 让它绘制彩虹、告白动画、迷你游戏，或者只是静静地趴在那里陪伴。
 
 **给枯燥的研究生生活添点色彩，给打工人摸鱼的桌面来点惊喜。**
-
----
 
 ## 它是怎么玩的？
 
@@ -37,7 +45,7 @@ Crush Claw 运行在你对象（或朋友、伴侣）的电脑上，你通过 AI
 | 🎨**远程绘画**       | AI 通过 Lua 脚本在对方的屏幕上绘制图案、文字、小游戏                             |
 | 🛡️**沙盒安全**     | Lua 脚本引擎完全隔离（`io/os/load/stdin` 全部封禁，10MB 内存硬限制，路径锚定） |
 | ⌨️**键鼠交互**     | 支持键盘和鼠标输入，小龙虾可以回应互动                                           |
-| 🪟**双窗口智能显隐** | 小龙虾桌宠始终置顶常伴；折叠后不影响绘图弹窗；绘图结束自动恢复                   |
+| 🪟**双窗口智能显隐** | 小龙虾桌宠始终置顶常伴；折叠（隐藏）后不影响绘图弹窗；绘图结束自动恢复           |
 | 🌐**多 IM 渠道**     | QQ、Telegram、微信、飞书、Web IM 均可接入                                        |
 | 💻**跨平台**         | Windows + Linux                                                                  |
 
@@ -102,7 +110,7 @@ REM 把你的 LLM Token 和 IM Channel Key 写入 config.json
     "enabled": true,
     "lcd_width": 480,
     "lcd_height": 480,
-	"emote_text": "zz6zz666!"
+	"emote_text": "Wi-Fi connected"
   }
 }
 
@@ -151,19 +159,21 @@ crush-claw start
 
 ## CLI 命令
 
-| 命令                                    | 说明           |
-| --------------------------------------- | -------------- |
-| `crush-claw config`                     | 交互式配置向导 |
-| `crush-claw start`                      | 后台启动 Agent |
-| `crush-claw stop`                       | 停止 Agent     |
-| `crush-claw restart`                    | 重启 Agent     |
-| `crush-claw status`                     | 查看运行状态   |
-| `crush-claw logs`                       | 查看日志       |
-| `crush-claw service enable\|disable`     | 开机自启管理   |
-| `crush-claw --help`                     | 查看全部命令   |
-| `crush-claw ask "你好"`                 | 远程对话       |
-| `crush-claw lua --run --path demo.lua`  | 运行 Lua 脚本  |
-| `crush-claw cap list`                   | 查看能力列表   |
+| 命令                                     | 说明           |
+| ---------------------------------------- | -------------- |
+| `crush-claw config`                    | 交互式配置向导 |
+| `crush-claw start`                     | 后台启动 Agent |
+| `crush-claw stop`                      | 停止 Agent     |
+| `crush-claw restart`                   | 重启 Agent     |
+| `crush-claw status`                    | 查看运行状态   |
+| `crush-claw logs`                      | 查看日志       |
+| `crush-claw service enable\|disable`    | 开机自启管理   |
+| `crush-claw --help`                    | 查看全部命令   |
+| `crush-claw ask "你好"`                | 远程对话       |
+| `crush-claw lua --run --path demo.lua` | 运行 Lua 脚本  |
+| `crush-claw cap list`                  | 查看能力列表   |
+
+> Crush Claw 兼容 esp-claw 框架内置的全部 [REPL 命令](https://esp-claw.com/zh-cn/reference-project/console-usage/)。当 Agent 处于运行状态时，在 esp-claw 原生命令前添加 `crush-claw` 前缀即可调用，例如 `crush-claw ask "你好"`、`crush-claw cap list`。上表仅列出常用命令，更多命令请查阅上述文档。
 
 ---
 
@@ -214,6 +224,24 @@ crush-claw/
 ├── installer/           # Inno Setup 安装器
 └── main_desktop.c       # 桌面入口
 ```
+
+---
+
+## 🙏 致谢
+
+Crush Claw 的灵感源于 [esp-claw](https://esp-claw.com) —— 乐鑫科技（Espressif）出品的嵌入式 AI Agent 框架。我们的项目最初的想法是在桌面层为 esp-claw 构建一套完整的模拟运行环境（sim_hal），让开发者无需 ESP32 硬件也能验证代理逻辑。
+
+esp-claw 提供了高质量的 AI Agent 引擎（claw_core、claw_cap、claw_skill、claw_memory 等核心模块），Crush Claw 复用了这些硬件无关的 C 代码，并在此基础上构建了桌面模拟层、Lua 沙箱、SDL2 窗口和 CLI 管理工具。
+
+感谢 esp-claw 团队的开源贡献。
+
+---
+
+## 💬 联系我们
+
+欢迎提交 [Issue](https://github.com/zz6zz666/crush-claw/issues) 或 [Pull Request](https://github.com/zz6zz666/crush-claw/pulls) 参与改进，也可邮件联系：**zz6zz666@qq.com**。
+
+> 🛡️ **沙箱安全**：Lua 沙箱是 Crush Claw 的安全基石。若发现任何沙箱逃逸、权限绕过或其它安全漏洞，可**优先通过邮件**私下报告，我们会第一时间响应修复。
 
 ---
 

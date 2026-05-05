@@ -303,6 +303,24 @@
             <p>${t('overview.trust_desc')}</p>
           </div>
         </section>
+
+        <section class="credits-section">
+          <div class="credits-inner">
+            <div class="credits-block">
+              <h3>${t('credits.ack_title')}</h3>
+              <p>${t('credits.ack_esp_claw')}</p>
+              <p><a href="https://esp-claw.com" target="_blank">https://esp-claw.com</a></p>
+            </div>
+            <div class="credits-block">
+              <h3>${t('credits.contact_title')}</h3>
+              <p>${t('credits.contact_github')} <a href="https://github.com/zz6zz666/crush-claw" target="_blank">GitHub</a></p>
+              <p>${t('credits.contact_email')}</p>
+            </div>
+          </div>
+          <div class="credits-vuln">
+            <div class="warn"><strong>\u26a0\ufe0f</strong> ${t('credits.contact_vuln')}</div>
+          </div>
+        </section>
       `;
     },
 
@@ -314,6 +332,7 @@
           <p>${t('guide.intro')}</p>
 
           <ol class="guide-list">
+            <li>${t('guide.step0')}</li>
             <li>${t('guide.step1')}</li>
             <li>${t('guide.step2')}</li>
             <li>${t('guide.step3')}</li>
@@ -331,6 +350,11 @@
 
           <h3>${t('guide.config_title')}</h3>
           <pre><code>${t('guide.config_example')}</code></pre>
+
+          <div class="disclaimer">
+            <h4>${t('guide.disclaimer_title')}</h4>
+            <p>${t('guide.disclaimer_body')}</p>
+          </div>
         </div>
       `;
     },
@@ -385,6 +409,8 @@
         { q: t('faq.q2'), a: t('faq.a2') },
         { q: t('faq.q3'), a: t('faq.a3') },
         { q: t('faq.q4'), a: t('faq.a4') },
+        { q: t('faq.q5'), a: t('faq.a5') },
+        { q: t('faq.q6'), a: t('faq.a6') },
       ];
       return `
         <div class="page">

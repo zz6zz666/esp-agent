@@ -55,6 +55,7 @@
   "guide": {
     "title": "使用指南",
     "intro": "首先，你需要说服你的 Crush / 对象在电脑上下载安装 Crush Claw。",
+    "step0": "从 <a href=\"https://github.com/zz6zz666/crush-claw/releases/latest\" target=\"_blank\">GitHub Releases</a> 下载最新安装包。",
     "step1": "从 <a href=\"https://platform.deepseek.com/\" target=\"_blank\">https://platform.deepseek.com/</a> 获取 API Key（模型与计费详情参见 <a href=\"https://api-docs.deepseek.com/zh-cn/quick_start/pricing\" target=\"_blank\">https://api-docs.deepseek.com/zh-cn/quick_start/pricing</a>）。",
     "step2": "从 <a href=\"https://q.qq.com/qqbot/openclaw/index.html\" target=\"_blank\">https://q.qq.com/qqbot/openclaw/index.html</a> 创建一个 QQ 机器人，保存 AppID 和 AppSecret。",
     "step3": "按照下方模板创建 <code>config.json</code> 文件，填入你的 API Key、AppID 和 AppSecret。",
@@ -65,7 +66,9 @@
     "trust_title": "信任与安全提醒",
     "trust_desc": "你的 LLM API Key 会存储在对方的电脑上。双方需要互相信任：你不应该利用 Lua 脚本漏洞攻击对方的电脑，对方也不应盗用你的 Key。如果担心安全问题，也可以让对方注册自己的 LLM 平台 API Key。",
     "config_title": "配置文件模板",
-    "config_example": "{\n  \"llm\": {\n    \"api_key\": \"sk-d**********************c\",\n    \"model\": \"deepseek-v4-flash\",\n    \"profile\": \"anthropic\",\n    \"base_url\": \"https://api.deepseek.com/anthropic\",\n    \"auth_type\": \"\",\n    \"timeout_ms\": \"120000\",\n    \"max_tokens\": \"409600\"\n  },\n  \"channels\": {\n    \"local_im\": {\n      \"enabled\": true\n    },\n    \"qq\": {\n      \"enabled\": true,\n      \"app_id\": \"1*******4\",\n      \"app_secret\": \"J4********************Pg\"\n    },\n    \"telegram\": {\n      \"enabled\": false,\n      \"bot_token\": \"\"\n    },\n    \"feishu\": {\n      \"enabled\": false,\n      \"app_id\": \"\",\n      \"app_secret\": \"\"\n    },\n    \"wechat\": {\n      \"enabled\": false,\n      \"token\": \"\",\n      \"base_url\": \"\",\n      \"cdn_base_url\": \"\",\n      \"account_id\": \"\"\n    }\n  },\n  \"search\": {\n    \"brave_key\": \"\",\n    \"tavily_key\": \"\"\n  },\n  \"display\": {\n    \"enabled\": true,\n    \"lcd_width\": 480,\n    \"lcd_height\": 480,\n    \"emote_text\": \"zz6zz666!\"\n  }\n}"
+    "config_example": "{\n  \"llm\": {\n    \"api_key\": \"sk-d**********************c\",\n    \"model\": \"deepseek-v4-flash\",\n    \"profile\": \"anthropic\",\n    \"base_url\": \"https://api.deepseek.com/anthropic\",\n    \"auth_type\": \"\",\n    \"timeout_ms\": \"120000\",\n    \"max_tokens\": \"409600\"\n  },\n  \"channels\": {\n    \"local_im\": {\n      \"enabled\": true\n    },\n    \"qq\": {\n      \"enabled\": true,\n      \"app_id\": \"1*******4\",\n      \"app_secret\": \"J4********************Pg\"\n    },\n    \"telegram\": {\n      \"enabled\": false,\n      \"bot_token\": \"\"\n    },\n    \"feishu\": {\n      \"enabled\": false,\n      \"app_id\": \"\",\n      \"app_secret\": \"\"\n    },\n    \"wechat\": {\n      \"enabled\": false,\n      \"token\": \"\",\n      \"base_url\": \"\",\n      \"cdn_base_url\": \"\",\n      \"account_id\": \"\"\n    }\n  },\n  \"search\": {\n    \"brave_key\": \"\",\n    \"tavily_key\": \"\"\n  },\n  \"display\": {\n    \"enabled\": true,\n    \"lcd_width\": 480,\n    \"lcd_height\": 480,\n    \"emote_text\": \"Wi-Fi connected\"\n  }\n}",
+    "disclaimer_title": "免责声明",
+    "disclaimer_body": "Crush Claw 是一款为增进亲密关系而设计的桌面工具。使用本软件即表示您同意：您不会利用 Lua 沙箱或其他功能对他人电脑进行未经授权的访问、破坏或攻击。开发者不对因滥用本软件导致的任何直接或间接损失承担责任。请尊重他人的隐私与设备安全，在信任与知情同意的前提下使用。"
   },
   "security": {
     "title": "安全详情",
@@ -99,6 +102,18 @@
     "q3": "小龙虾可以隐藏吗？",
     "a3": "可以。对方可以随时最小化小龙虾窗口。也可以在任务栏右键菜单中永久隐藏。Lua 绘图窗口不受影响，仍然会独立弹出。",
     "q4": "如何配置 IM 通道？",
-    "a4": "创建一个 Telegram 机器人（或 QQ 机器人、微信机器人等），获取 Token 后写入 config.json。Agent 会自动连接到 IM 平台并监听你的消息。"
+    "a4": "创建一个 Telegram 机器人（或 QQ 机器人、微信机器人等），获取 Token 后写入 config.json。Agent 会自动连接到 IM 平台并监听你的消息。",
+    "q5": "如何启用或关闭开机自启动？",
+    "a5": "在任务栏图标上右键，勾选或取消勾选 \u201cAuto-start on Login\u201d 即可。",
+    "q6": "为什么始终没有弹出窗口？",
+    "a6": "请在任务栏右键菜单中检查是否勾选了 \u201cAlways Hide Windows\u201d。开启后 emote 动画窗口和 Lua 绘制窗口都不会弹出。希望你的 crush / 对象不会因为你频繁在屏幕上画东西而选择始终隐藏窗口 \u2014\u2014 或者干脆关掉软件 😅"
+  },
+  "credits": {
+    "ack_title": "致谢",
+    "ack_esp_claw": "Crush Claw 的灵感与核心引擎源于乐鑫科技（Espressif）的 esp-claw 嵌入式 AI Agent 框架。我们在桌面层为其构建了完整的模拟运行环境（sim_hal），让开发者无需 ESP32 硬件也能验证代理逻辑。感谢 esp-claw 团队的开源贡献。",
+    "contact_title": "联系我们",
+    "contact_github": "欢迎提交 Issue 或 Pull Request 参与改进。",
+    "contact_email": "也可邮件联系：zz6zz666@qq.com",
+    "contact_vuln": "若发现沙箱逃逸、权限绕过或其他安全漏洞，请优先通过邮件私下报告，我们会第一时间响应修复。"
   }
 }

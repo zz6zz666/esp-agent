@@ -12,7 +12,7 @@
     "badge_sandbox": "Sandbox Isolated",
     "badge_perm": "Zero Permissions",
     "badge_cross": "Cross-Platform",
-    "btn_start": "Get Started \u2192",
+    "btn_start": "Get Started →",
     "btn_security": "Security Details",
     "security_title": "Security is our foundation",
     "security_subtitle": "Your safety on someone else's computer is not an afterthought. It is the architecture.",
@@ -24,16 +24,16 @@
     "sec_audit_desc": "Production builds disable all debug hooks. All scripts statically analyzed before execution. Zero trust by design.",
     "core_title": "Core Features",
     "feature1": "An Interactive Desktop Companion",
-    "feature1_desc": "A dynamic desktop lobster powered by the Emote engine, always visible on top. Fold, move, or interact \u2014 like a real little presence quietly waiting in the corner of the screen for your call.",
+    "feature1_desc": "A dynamic desktop lobster powered by the Emote engine, always visible on top. Fold, move, or interact — like a real little presence quietly waiting in the corner of the screen for your call.",
     "feature2": "AI-Powered Remote Canvas",
-    "feature2_desc": "Say \"draw a heart\" and AI draws in real time on their screen via Lua scripts. Even when the pet window is hidden, drawings pop up automatically \u2014 so every surprise is never missed.",
+    "feature2_desc": "Say \"draw a heart\" and AI draws in real time on their screen via Lua scripts. Even when the pet window is hidden, drawings pop up automatically — so every surprise is never missed.",
     "tech_title": "Technical Features",
     "feature3": "Bank-Grade Sandbox Isolation",
-    "feature3_desc": "Fully isolated Lua engine \u00b7 No I/O or OS access \u00b7 10MB hard memory cap \u00b7 Read-only anchored storage \u00b7 Zero debug in production \u00b7 Static script analysis before execution. Security is not a feature \u2014 it is the baseline.",
+    "feature3_desc": "Fully isolated Lua engine · No I/O or OS access · 10MB hard memory cap · Read-only anchored storage · Zero debug in production · Static script analysis before execution. Security is not a feature — it is the baseline.",
     "feature4": "Natural Interaction",
-    "feature4_desc": "Drawings and mini-games support full interactive input. Click, drag, and type \u2014 just like using a real little app.",
+    "feature4_desc": "Drawings and mini-games support full interactive input. Click, drag, and type — just like using a real little app.",
     "feature5": "Smart Window Switching",
-    "feature5_desc": "Emote pet window stays on top for companionship. When minimized, drawing windows still pop up independently. After drawing ends, the pet quietly returns to its previous state \u2014 or stays hidden, if they prefer.",
+    "feature5_desc": "Emote pet window stays on top for companionship. When minimized, drawing windows still pop up independently. After drawing ends, the pet quietly returns to its previous state — or stays hidden, if they prefer.",
     "feature6": "Windows & Linux",
     "feature6_desc": "One-click installer. Your partner launches it and is ready in under 3 minutes. No accounts. No complex setup. Just a config file.",
     "usecase_title": "How people use Crush Claw",
@@ -55,6 +55,7 @@
   "guide": {
     "title": "Usage Guide",
     "intro": "First, convince your crush / partner to download and install Crush Claw on their computer.",
+    "step0": "Download the latest installer from <a href=\"https://github.com/zz6zz666/crush-claw/releases/latest\" target=\"_blank\">GitHub Releases</a>.",
     "step1": "Get an API Key from <a href=\"https://platform.deepseek.com/\" target=\"_blank\">https://platform.deepseek.com/</a> (model & pricing details at <a href=\"https://api-docs.deepseek.com/en/quick_start/pricing\" target=\"_blank\">https://api-docs.deepseek.com/en/quick_start/pricing</a>).",
     "step2": "Create a QQ bot at <a href=\"https://q.qq.com/qqbot/openclaw/index.html\" target=\"_blank\">https://q.qq.com/qqbot/openclaw/index.html</a> and save the AppID and AppSecret.",
     "step3": "Create a <code>config.json</code> file using the template below, fill in your API Key, AppID and AppSecret.",
@@ -65,7 +66,9 @@
     "trust_title": "Trust & Security Reminder",
     "trust_desc": "Your LLM API Key will be stored on your partner's computer. Both parties need mutual trust: you should not exploit Lua scripts to attack their computer, and they should not steal your key. If concerned about security, you can also ask your partner to register their own LLM API key.",
     "config_title": "Configuration Template",
-    "config_example": "{\n  \"llm\": {\n    \"api_key\": \"sk-d**********************c\",\n    \"model\": \"deepseek-v4-flash\",\n    \"profile\": \"anthropic\",\n    \"base_url\": \"https://api.deepseek.com/anthropic\",\n    \"auth_type\": \"\",\n    \"timeout_ms\": \"120000\",\n    \"max_tokens\": \"409600\"\n  },\n  \"channels\": {\n    \"local_im\": {\n      \"enabled\": true\n    },\n    \"qq\": {\n      \"enabled\": true,\n      \"app_id\": \"1*******4\",\n      \"app_secret\": \"J4********************Pg\"\n    },\n    \"telegram\": {\n      \"enabled\": false,\n      \"bot_token\": \"\"\n    },\n    \"feishu\": {\n      \"enabled\": false,\n      \"app_id\": \"\",\n      \"app_secret\": \"\"\n    },\n    \"wechat\": {\n      \"enabled\": false,\n      \"token\": \"\",\n      \"base_url\": \"\",\n      \"cdn_base_url\": \"\",\n      \"account_id\": \"\"\n    }\n  },\n  \"search\": {\n    \"brave_key\": \"\",\n    \"tavily_key\": \"\"\n  },\n  \"display\": {\n    \"enabled\": true,\n    \"lcd_width\": 480,\n    \"lcd_height\": 480,\n    \"emote_text\": \"zz6zz666!\"\n  }\n}"
+    "config_example": "{\n  \"llm\": {\n    \"api_key\": \"sk-d**********************c\",\n    \"model\": \"deepseek-v4-flash\",\n    \"profile\": \"anthropic\",\n    \"base_url\": \"https://api.deepseek.com/anthropic\",\n    \"auth_type\": \"\",\n    \"timeout_ms\": \"120000\",\n    \"max_tokens\": \"409600\"\n  },\n  \"channels\": {\n    \"local_im\": {\n      \"enabled\": true\n    },\n    \"qq\": {\n      \"enabled\": true,\n      \"app_id\": \"1*******4\",\n      \"app_secret\": \"J4********************Pg\"\n    },\n    \"telegram\": {\n      \"enabled\": false,\n      \"bot_token\": \"\"\n    },\n    \"feishu\": {\n      \"enabled\": false,\n      \"app_id\": \"\",\n      \"app_secret\": \"\"\n    },\n    \"wechat\": {\n      \"enabled\": false,\n      \"token\": \"\",\n      \"base_url\": \"\",\n      \"cdn_base_url\": \"\",\n      \"account_id\": \"\"\n    }\n  },\n  \"search\": {\n    \"brave_key\": \"\",\n    \"tavily_key\": \"\"\n  },\n  \"display\": {\n    \"enabled\": true,\n    \"lcd_width\": 480,\n    \"lcd_height\": 480,\n    \"emote_text\": \"Wi-Fi connected\"\n  }\n}",
+    "disclaimer_title": "Disclaimer",
+    "disclaimer_body": "Crush Claw is a desktop tool designed to enhance intimate relationships. By using this software, you agree that you will not exploit the Lua sandbox or any other functionality to perform unauthorized access, damage, or attacks on others' computers. The developer shall not be held liable for any direct or indirect damages resulting from misuse of this software. Please respect others' privacy and device security, and use it only with trust and informed consent."
   },
   "security": {
     "title": "Security",
@@ -93,12 +96,24 @@
   "faq": {
     "title": "FAQ",
     "q1": "How do I start?",
-    "a1": "Install the program on your partner's computer, create a config.json with your API key and IM token, send it to them, and they launch the app. Then send a message through the IM channel \u2014 the AI will control the lobster.",
+    "a1": "Install the program on your partner's computer, create a config.json with your API key and IM token, send it to them, and they launch the app. Then send a message through the IM channel — the AI will control the lobster.",
     "q2": "Is it safe for my partner's computer?",
     "a2": "The Lua sandbox has been designed with security as the #1 priority. All dangerous operations are blocked at the C level (not just hidden from Lua). See the Security page for the full attack vector matrix.",
     "q3": "Can the lobster be hidden?",
     "a3": "Yes. Your partner can minimize the emote window at any time. It can also be permanently hidden via the taskbar context menu. Lua drawing windows will still pop up independently when the AI draws.",
     "q4": "How do I set up the IM channel?",
-    "a4": "Create a Telegram bot (or QQ bot, WeChat bot, etc.), get the token, put it in config.json. The agent connects to the IM platform and listens for messages from you."
+    "a4": "Create a Telegram bot (or QQ bot, WeChat bot, etc.), get the token, put it in config.json. The agent connects to the IM platform and listens for messages from you.",
+    "q5": "How do I enable or disable auto-start on login?",
+    "a5": "Right-click the taskbar icon and check/uncheck \"Auto-start on Login\".",
+    "q6": "Why do no windows ever pop up?",
+    "a6": "Check if “Always Hide Windows” is enabled in the taskbar right-click menu. When checked, neither the emote animation window nor Lua drawing windows will appear. Hopefully your crush / partner won’t feel the need to enable this — or close the software entirely — because you keep drawing things on their screen too often! 😅"
+  },
+  "credits": {
+    "ack_title": "Acknowledgments",
+    "ack_esp_claw": "Crush Claw draws inspiration and core engine from Espressif's esp-claw embedded AI Agent framework. We built a complete desktop simulation layer (sim_hal) so developers can validate agent logic without ESP32 hardware. Thanks to the esp-claw team for their open-source contributions.",
+    "contact_title": "Contact",
+    "contact_github": "Issues and Pull Requests are welcome on GitHub.",
+    "contact_email": "Or reach us at: zz6zz666@qq.com",
+    "contact_vuln": "If you discover any sandbox escape, privilege bypass, or other security vulnerability, please report it privately via email first. We will respond and fix it promptly."
   }
 }

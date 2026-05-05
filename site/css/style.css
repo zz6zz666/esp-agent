@@ -505,6 +505,47 @@ body {
 .warn strong { color: var(--warn); }
 pre { background: #080d19; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 20px 24px; overflow-x: auto; margin: 16px 0; }
 pre code { font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace; font-size: 13px; color: #c0bbb4; line-height: 1.7; }
+.disclaimer {
+  margin-top: 48px;
+  padding: 20px 24px;
+  border-top: 1px solid var(--border);
+}
+.disclaimer h4 {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+.disclaimer p {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.6;
+  margin: 0;
+}
+
+/* ============== CREDITS (Acknowledgments + Contact) ============== */
+.credits-section {
+  padding: 60px 40px 100px;
+  background: #080d19;
+}
+.credits-inner {
+  display: flex;
+  gap: 48px;
+  border-top: 1px solid var(--border);
+  padding-top: 48px;
+  max-width: 1280px;
+  margin: 0 auto;
+}
+.credits-block { flex: 1; min-width: 0; }
+.credits-block h3 { font-size: 18px; font-weight: 600; margin-bottom: 14px; }
+.credits-block p { color: var(--text-muted); font-size: 14px; line-height: 1.7; margin-bottom: 10px; }
+.credits-block a { color: var(--accent); transition: color var(--transition); }
+.credits-block a:hover { color: #ff8a8a; text-decoration: underline; }
+.credits-vuln {
+  max-width: 1280px;
+  margin: 24px auto 0;
+  padding: 0 40px;
+}
 
 /* Pulse shared */
 @keyframes pulse {
