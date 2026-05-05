@@ -503,8 +503,45 @@ body {
   border-radius: var(--radius-sm); margin: 24px 0; font-size: 14px; color: var(--text-secondary);
 }
 .warn strong { color: var(--warn); }
-pre { background: #080d19; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 20px 24px; overflow-x: auto; margin: 16px 0; }
+pre { background: #1a1a2e; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 20px 40px 20px 24px; overflow: auto; margin: 0; max-height: 480px; scrollbar-width: thin; scrollbar-color: #334155 transparent; }
 pre code { font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace; font-size: 13px; color: #c0bbb4; line-height: 1.7; }
+pre::-webkit-scrollbar { width: 6px; height: 6px; }
+pre::-webkit-scrollbar-track { background: transparent; }
+pre::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+.code-block-wrapper {
+  position: relative;
+  margin: 16px 0;
+  border-radius: var(--radius-sm);
+}
+.copy-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  background: rgba(255,255,255,0.08);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-family: var(--font);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition);
+  opacity: 0;
+}
+.code-block-wrapper:hover .copy-btn {
+  opacity: 1;
+}
+.copy-btn:hover {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.copy-btn.copied {
+  background: #4ade80;
+  color: #fff;
+  border-color: #4ade80;
+}
 .disclaimer {
   margin-top: 48px;
   padding: 20px 24px;

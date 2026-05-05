@@ -349,7 +349,10 @@
           <div class="warn"><strong>\u26a0\ufe0f ${t('guide.trust_title')}</strong> ${t('guide.trust_desc')}</div>
 
           <h3>${t('guide.config_title')}</h3>
-          <pre><code>${t('guide.config_example')}</code></pre>
+          <div class="code-block-wrapper">
+            <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+            <pre><code>${t('guide.config_example')}</code></pre>
+          </div>
 
           <div class="disclaimer">
             <h4>${t('guide.disclaimer_title')}</h4>
@@ -473,6 +476,33 @@
     }
   }
   setInterval(updateTaskbarTime, 30000);
+
+  /* ---- copy code ---- */
+  window.copyCode = function(btn) {
+    const code = btn.parentElement.querySelector('code');
+    const text = code.textContent;
+    navigator.clipboard.writeText(text).then(() => {
+      btn.textContent = '\u2713 Copied';
+      btn.classList.add('copied');
+      setTimeout(() => {
+        btn.textContent = 'Copy';
+        btn.classList.remove('copied');
+      }, 2000);
+    }).catch(() => {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      btn.textContent = '\u2713 Copied';
+      btn.classList.add('copied');
+      setTimeout(() => {
+        btn.textContent = 'Copy';
+        btn.classList.remove('copied');
+      }, 2000);
+    });
+  };
 
   /* ---- init ---- */
   loadI18n().then(() => {
