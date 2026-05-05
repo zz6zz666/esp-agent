@@ -91,7 +91,7 @@ bool tray_icon_init(void)
                 IDM_ALWAYS_HIDE, "Always Hide Windows");
     AppendMenuA(s_menu, MF_SEPARATOR, 0, NULL);
     AppendMenuA(s_menu, MF_STRING | (tray_autostart_is_enabled() ? MF_CHECKED : 0),
-                IDM_AUTOSTART, "Start with Windows");
+                IDM_AUTOSTART, "Auto-start on Login");
     AppendMenuA(s_menu, MF_SEPARATOR, 0, NULL);
     AppendMenuA(s_menu, MF_STRING, IDM_EXIT, "Exit");
 

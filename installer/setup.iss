@@ -35,7 +35,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: checkedonce
 Name: "path"; Description: "Add to &PATH environment variable (run crush-claw from any terminal)"; GroupDescription: "Environment:"; Flags: checkedonce
-Name: "autostart"; Description: "Start with Wi&ndows (auto-run on login)"; GroupDescription: "Startup:"; Flags: checkedonce
+Name: "autostart"; Description: "Auto-start on &login"; GroupDescription: "Startup:"; Flags: checkedonce
 
 [Files]
 ; Main binaries
