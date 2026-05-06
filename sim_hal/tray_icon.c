@@ -37,7 +37,7 @@ static HMENU  s_menu = NULL;
 #define IDI_CLAW     1
 
 #define REG_AUTOSTART_KEY "Software\\Microsoft\\Windows\\CurrentVersion\\Run"
-#define REG_AUTOSTART_VAL "crush-claw"
+#define REG_AUTOSTART_VAL "Crush Claw"
 #define REG_APP_KEY       "Software\\crush-claw"
 #define REG_ALWAYS_HIDE   "AlwaysHide"
 

@@ -365,6 +365,9 @@ static inline void rgb565_to_rgb(uint16_t c, uint8_t *r, uint8_t *g, uint8_t *b)
  * emote mode draws directly to the display surface. */
 static inline SDL_Surface *draw_surface(void)
 {
+    if (s_ctx.lua_mode && !s_ctx.frame_active) {
+        display_hal_begin_frame(false, 0);
+    }
     if (s_ctx.lua_mode && s_ctx.surface_draw)
         return s_ctx.surface_draw;
     return s_ctx.surface;

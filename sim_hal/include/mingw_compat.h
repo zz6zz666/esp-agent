@@ -68,6 +68,22 @@ size_t __cdecl _mingw_strftime_utf8(char * __restrict__ buf, size_t maxsize,
     _mingw_strftime_utf8(buf, maxsize, format, tm)
 #endif
 
+/* ---- open_memstream (GNU extension, not in MinGW CRT) ---- */
+#ifndef open_memstream
+FILE *open_memstream(char **bufp, size_t *sizep);
+#endif
+
+/* ---- stdout lvalue fix (MinGW: stdout is __acrt_iob_func(1), not an lvalue) ---- */
+/*
+ * ESP-IDF / POSIX code often assigns stdout = capture to redirect output.
+ * On Windows/MinGW the macro is not an lvalue, so we replace it with a
+ * modifiable pointer that mimics the original CRT handle.
+ */
+#include <stdio.h>
+#undef stdout
+extern FILE *crush_stdout;
+#define stdout crush_stdout
+
 /* ---- asprintf (GNU) ---- */
 #ifndef asprintf
 static inline int asprintf(char **strp, const char *fmt, ...)

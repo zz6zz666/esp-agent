@@ -37,6 +37,8 @@ set(SIM_SRCS
     ${SIM_HAL_DIR}/esp_mmap_assets_stub.c
     ${SIM_HAL_DIR}/lv_font_stub.c
     ${SIM_HAL_DIR}/cap_lua_sandbox.c
+    $<$<BOOL:${WIN32}>:${SIM_HAL_DIR}/memstream_stub.c>
+    $<$<BOOL:${WIN32}>:${SIM_HAL_DIR}/stdout_wrapper.c>
     $<$<BOOL:${WIN32}>:${SIM_HAL_DIR}/tray_icon.c>
 )
 
@@ -375,7 +377,7 @@ add_executable(esp-claw-desktop
 if(WIN32)
     # GUI subsystem — prevents console window popup when launched from shortcuts.
     # Foreground terminal output still works via AttachConsole(ATTACH_PARENT_PROCESS).
-    target_link_options(esp-claw-desktop PRIVATE -Wl,--subsystem,windows)
+    target_link_options(esp-claw-desktop PRIVATE -Wl,--subsystem,windows -Wl,--wrap,fclose)
 endif()
 if(WIN32)
     target_sources(esp-claw-desktop PRIVATE ${CMAKE_SOURCE_DIR}/resources.rc)
