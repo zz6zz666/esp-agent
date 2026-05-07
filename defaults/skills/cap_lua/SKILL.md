@@ -173,6 +173,85 @@ Stopping rules:
 - If `wait_ms` is omitted or `0`, the default wait is `2000` ms.
 - If stop wait times out, do not assume the job is fully stopped yet.
 
+## Sandbox Restrictions
+
+The Lua runtime runs in a hardened sandbox. The following operations are **disabled** and will cause a script error (crash) if used.
+
+### Disabled Standard Libraries
+- **`io.*`** — entire library erased from `_G` and `package.loaded`. `io.open`, `io.read`, `io.write`, `io.lines`, `io.tmpfile`, etc. do not exist. Use `local storage = require("storage")` for all file I/O.
+- **`os.*`** — entire library erased. `os.execute`, `os.rename`, `os.remove`, `os.tmpname`, `os.exit`, `os.getenv`, `os.setlocale`, `os.clock`, `os.date`, `os.time`, `os.difftime` do not exist. Use `get_time_info` capability for time, `storage` module for file/directory operations.
+- **`debug.*`** — stripped to only `debug.traceback`. `debug.getinfo`, `debug.getlocal`, `debug.setlocal`, `debug.getupvalue`, `debug.setupvalue`, `debug.getmetatable`, `debug.setmetatable`, `debug.getregistry`, `debug.gethook`, `debug.sethook`, `debug.getuservalue`, `debug.setuservalue`, `debug.upvalueid`, `debug.upvaluejoin` are all nil'd.
+
+### Disabled Globals
+- **`dofile`** — nil'd. Cannot load and execute external Lua files at runtime.
+- **`loadfile`** — nil'd. Cannot load Lua code from the filesystem.
+- **`load`** — nil'd. Cannot compile and execute arbitrary Lua strings at runtime.
+- **`string.dump`** — nil'd. Bytecode generation is disabled.
+
+### Disabled Module Features
+- **C library `require()`** — the C library searcher and C root searcher (package.searchers[3] and [4]) are removed. Only built-in Lua modules registered by the system can be `require`d. Do not assume third-party or C-extension modules exist.
+- **`package.loadlib`** — erased. Cannot load shared libraries.
+
+### `capability.call` Allowlist
+From Lua, `capability.call` is restricted to exactly these 16 capability IDs. Calling any other capability will error with `"cap '<name>' not allowed from Lua"`.
+
+**Allowed from Lua:**
+
+| Capability | Purpose |
+|---|---|
+| `get_system_info` | System information (CPU, board, firmware) |
+| `get_ip_address` | Network IP, netmask, gateway |
+| `get_memory_info` | Free/total memory |
+| `get_cpu_info` | CPU model, cores, frequency |
+| `get_wifi_info` | WiFi SSID, RSSI, connection status |
+| `memory_list` | List memory store entries |
+| `memory_get` | Get a memory entry by key |
+| `memory_search` | Search memory store |
+| `memory_count` | Count memory entries |
+| `memory_stats` | Memory store statistics |
+| `get_time_info` | Current date/time, timezone |
+| `lua_list_scripts` | List available Lua scripts |
+| `lua_run_script` | Run a Lua script synchronously |
+| `lua_list_async_jobs` | List async job statuses |
+| `lua_get_async_job` | Get async job details |
+
+**Blocked from Lua** (call these from outside Lua, via the agent's direct capability tools):
+
+| Blocked Capability | Why Blocked / Alternative |
+|---|---|
+| `read_file`, `write_file`, `delete_file`, `copy_file`, `move_file`, `list_dir` | cap_files operations. In Lua, use `require("storage")` instead. From the agent side, call these capabilities directly. |
+| `lua_write_script`, `lua_run_script_async`, `lua_stop_async_job`, `lua_stop_all_async_jobs` | Script lifecycle management. Use the agent's direct Lua tools for these. |
+| `memory_store`, `memory_update`, `memory_forget` | Memory mutation. Use agent-side memory capabilities. |
+| `qq_send_message`, `qq_send_image`, `qq_send_file`, `tg_send_message`, `tg_send_image`, `tg_send_file`, `wechat_send_message`, `wechat_send_image` | All IM sends. Use agent-side IM capabilities. |
+| `run_cli_command` | Shell command execution. Use agent-side CLI tools. |
+| All scheduler operations | Cron job management. Use agent-side scheduler capabilities. |
+
+### File I/O: What Actually Works
+
+**In Lua scripts** (`require("storage")`):
+- `storage.read_file(path)` — read a text file
+- `storage.write_file(path, content)` — create or overwrite a file
+- `storage.exists(path)` — check if path exists
+- `storage.stat(path)` — get file/directory metadata
+- `storage.listdir(path)` — list directory contents
+- `storage.remove(path)` — delete file or empty directory
+- `storage.mkdir(path)` — create directory
+- `storage.rename(old, new)` — rename or move
+- `storage.get_root_dir()` — get sandbox base directory
+- `storage.join_path(...)` — build safe paths
+- `storage.get_free_space()` — disk space info
+
+All `storage` paths are validated: must be absolute, under the sandbox base, and must NOT contain `..`. Always build paths with `storage.join_path(storage.get_root_dir(), ...)`.
+
+**From outside Lua** (agent capability calls):
+- `read_file`, `write_file`, `delete_file`, `copy_file`, `move_file`, `list_dir` — these are cap_files capabilities. Call them directly, not from within Lua scripts.
+
+### Memory Budget
+- Hard limit: **10 MB per Lua state**. Exceeding this causes allocation failures (nil returns, crashes).
+- GC tuned aggressively: 50% pause threshold, 3× collection speed.
+- Keep scripts lean. Process large data in chunks. Release references to large tables when done.
+- Concurrent async jobs each have their own 10 MB budget (each runs in a separate Lua state).
+
 ## IM And Events From Lua
 
 - For direct user replies, images, or files that do not depend on Lua runtime state, prefer calling the corresponding IM capability outside Lua.

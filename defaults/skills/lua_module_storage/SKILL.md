@@ -10,6 +10,8 @@
 
 This skill describes how to correctly use storage when writing Lua scripts.
 
+> **Critical:** The Lua sandbox erases `io.*` and `os.*` entirely — `io.open`, `io.read`, `io.write`, `os.rename`, `os.remove`, etc. do not exist and will cause a script error if used. `require("storage")` is the ONLY way to perform file I/O from Lua scripts. All paths are validated to stay within the sandbox base directory.
+
 ## How to call
 - Import it with `local storage = require("storage")`
 - Call `storage.get_root_dir()` to get the storage root directory

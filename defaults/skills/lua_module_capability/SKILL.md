@@ -10,10 +10,33 @@
 
 This skill describes how to call registered capabilities directly from Lua.
 
+> **Critical:** `capability.call` from Lua is restricted to a fixed allowlist of 16 capabilities. Calling any other capability (including `read_file`, `write_file`, `delete_file`, all IM sends, `memory_store`, `run_cli_command`, etc.) will error with `"cap '<name>' not allowed from Lua"`. For file operations in Lua, use `require("storage")` instead. For everything else, call the capabilities directly from outside Lua (agent tools).
+
+## Allowed Capabilities
+Only these 16 capability IDs can be called from Lua:
+
+| Capability | Purpose |
+|---|---|
+| `get_system_info` | System information |
+| `get_ip_address` | Network IP address |
+| `get_memory_info` | Memory statistics |
+| `get_cpu_info` | CPU information |
+| `get_wifi_info` | WiFi status |
+| `memory_list` | List memory entries |
+| `memory_get` | Get memory entry |
+| `memory_search` | Search memory |
+| `memory_count` | Count memory entries |
+| `memory_stats` | Memory statistics |
+| `get_time_info` | Current time |
+| `lua_list_scripts` | List Lua scripts |
+| `lua_run_script` | Run script synchronously |
+| `lua_list_async_jobs` | List async jobs |
+| `lua_get_async_job` | Get async job details |
+
 ## How to call
 - Import it with `local capability = require("capability")`
 - Main API: `ok, out, err = capability.call(name, payload[, opts])`. ALWAYS follow the 3-element pattern, `ok, out, err`, to receive the result, for example `local ok, xxx_out, err = capability.call("xxx", ...)`.
-- `name` must match the real registered capability id, for example `qq_send_message`, `qq_send_image`, or `qq_send_file`.
+- `name` must match one of the allowed capability IDs listed above, for example `get_system_info` or `get_time_info`. IM capabilities (`qq_send_message`, `tg_send_message`, etc.) are blocked from Lua and will error.
 
 ## API
 
@@ -30,7 +53,7 @@ This skill describes how to call registered capabilities directly from Lua.
 - `nil` becomes `{}`.
 - A Lua `table` is serialized to compact JSON.
 - A `string` must already be valid JSON and is passed through unchanged.
-- The payload keys must match the target capability schema exactly. For example, `qq_send_message` expects `message`, not `text`.
+- The payload keys must match the target capability schema exactly. For example, `memory_get` expects `key`, not `query`.
 
 ## Supported `opts`
 - `session_id: string`
@@ -40,7 +63,10 @@ This skill describes how to call registered capabilities directly from Lua.
 
 If an `opts` field is missing, the module tries to inherit the same field from global `args`.
 
-## IM capability mapping
+## IM capability mapping (BLOCKED from Lua sandbox)
+
+> All IM capabilities below are blocked by the Lua sandbox allowlist. Calling them from Lua will error. Use agent-side IM tools directly instead.
+
 - QQ text/image/file:
   - `qq_send_message` with required `chat_id` and `message`
   - `qq_send_image` with required `chat_id`, `path`, and optional `caption`
@@ -61,100 +87,48 @@ If an `opts` field is missing, the module tries to inherit the same field from g
 
 ## Examples
 
-### Send a QQ message
+> All examples below use capabilities that ARE allowed from Lua. The IM send examples previously shown here are blocked by the sandbox and will error at runtime.
+
+### Get system info
 ```lua
 local capability = require("capability")
 
-local ok, out, err = capability.call("qq_send_message", {
-  message = "hello from lua"
-}, {
-  channel = "qq",
-  chat_id = "c2c:123456",
-  session_id = "demo-session",
-  source_cap = "lua_script"
+local ok, out, err = capability.call("get_system_info", {})
+print(ok, out, err)
+```
+
+### Get time
+```lua
+local capability = require("capability")
+
+local ok, out, err = capability.call("get_time_info", {})
+print(ok, out, err)
+```
+
+### Run another Lua script
+```lua
+local capability = require("capability")
+
+local ok, out, err = capability.call("lua_run_script", {
+  path = "builtin/test/basic_system_info.lua"
 })
 print(ok, out, err)
 ```
 
-### Send an image or file
+### Get memory info
 ```lua
 local capability = require("capability")
 
-local ok1, out1, err1 = capability.call("qq_send_image", {
-  path = "/fatfs/statistics/ESP-Claw.png",
-  caption = "image from lua"
-}, {
-  channel = "qq",
-  chat_id = "c2c:123456",
-  source_cap = "lua_script"
-})
-
-local ok2, out2, err2 = capability.call("qq_send_file", {
-  path = "/fatfs/reports/status.json",
-  caption = "latest report"
-}, {
-  channel = "qq",
-  chat_id = "c2c:123456",
-  source_cap = "lua_script"
-})
-
-print(ok1, out1, err1)
-print(ok2, out2, err2)
-```
-
-### Send a Telegram message
-```lua
-local capability = require("capability")
-
-local ok, out, err = capability.call("tg_send_message", {
-  message = "hello from lua"
-}, {
-  channel = "telegram",
-  chat_id = "-1001234567890",
-  source_cap = "lua_script"
-})
+local ok, out, err = capability.call("get_memory_info", {})
 print(ok, out, err)
 ```
 
-### Send a Telegram message to another chat
+### Memory operations
 ```lua
 local capability = require("capability")
 
-local ok, out, err = capability.call("tg_send_message", {
-  message = "telegram reply from lua"
-}, {
-  channel = "telegram",
-  chat_id = "-1009876543210",
-  source_cap = "lua_script"
-})
-print(ok, out, err)
-```
-
-### Send a WeChat message
-```lua
-local capability = require("capability")
-
-local ok, out, err = capability.call("wechat_send_message", {
-  chat_id = "room123",
-  message = "hello from lua"
-}, {
-  channel = "wechat",
-  source_cap = "lua_script"
-})
-print(ok, out, err)
-```
-
-### Send a WeChat image
-```lua
-local capability = require("capability")
-
-local ok, out, err = capability.call("wechat_send_image", {
-  chat_id = "wxid_abc123",
-  path = "/fatfs/statistics/ESP-Claw.png",
-  caption = "image from lua"
-}, {
-  channel = "wechat",
-  source_cap = "lua_script"
-})
-print(ok, out, err)
+local ok1, out1, err1 = capability.call("memory_list", {})
+local ok2, out2, err2 = capability.call("memory_get", { key = "user_profile" })
+local ok3, out3, err3 = capability.call("memory_search", { query = "preferences" })
+print(ok1, ok2, ok3)
 ```

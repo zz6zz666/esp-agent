@@ -24,5 +24,10 @@
   },
   "display": {
     "enabled": true
+  },
+  "session": {
+    "context_token_budget": "96256",
+    "max_message_chars": "4096",
+    "compress_threshold_percent": "80"
   }
 }
