@@ -62,6 +62,19 @@ delay.delay_ms(10000)  -- keep visible for 10 seconds
 display.deinit()
 ```
 
+**Animation / render loops:** always use `delay.frame_sync(target_ms)`
+instead of `delay.delay_ms(target_ms)` when redrawing the screen every
+iteration. `frame_sync` compensates for the render time between frames
+so the total frame period stays constant.
+
+```lua
+while true do
+    display.clear(...)
+    display.draw_text(...)
+    delay.frame_sync(50)   -- 50ms per frame, regardless of render cost
+end
+```
+
 ## Important rules
 
 - All coordinates and sizes are integer arguments unless noted otherwise.
