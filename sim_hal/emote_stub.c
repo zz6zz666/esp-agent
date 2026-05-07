@@ -34,6 +34,7 @@
 
 /* display_sdl2.c extension — signals main loop that a frame is ready */
 extern void display_hal_mark_frame_ready(void);
+extern void display_hal_set_toast_text(const char *text);
 
 static const char *TAG = "app_emote";
 
@@ -257,16 +258,21 @@ esp_err_t emote_set_network_status(bool sta_connected, const char *ap_ssid)
 
     char msg[96];
     if (sta_connected && ap_present) {
+        display_hal_set_toast_text(NULL);
         snprintf(msg, sizeof(msg), "Online * AP: %s", ap_ssid);
     } else if (sta_connected) {
         if (s_network_msg[0]) {
-            snprintf(msg, sizeof(msg), "%s", s_network_msg);
+            display_hal_set_toast_text(s_network_msg);
+            msg[0] = '\0'; /* clear GFX label — toast renders via SDL2_ttf */
         } else {
+            display_hal_set_toast_text(NULL);
             snprintf(msg, sizeof(msg), "Wi-Fi connected");
         }
     } else if (ap_present) {
+        display_hal_set_toast_text(NULL);
         snprintf(msg, sizeof(msg), "Setup WiFi: %s", ap_ssid);
     } else {
+        display_hal_set_toast_text(NULL);
         snprintf(msg, sizeof(msg), "Wi-Fi offline");
     }
 

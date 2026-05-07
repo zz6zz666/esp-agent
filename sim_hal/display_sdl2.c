@@ -679,6 +679,38 @@ bool display_hal_recreate_emote(void)
     return true;
 }
 
+/* ---- emote toast overlay (SDL2_ttf for emoji support) ---- */
+
+static char s_toast_text[96];
+
+void display_hal_set_toast_text(const char *text)
+{
+    if (text && text[0]) {
+        strncpy(s_toast_text, text, sizeof(s_toast_text) - 1);
+        s_toast_text[sizeof(s_toast_text) - 1] = '\0';
+    } else {
+        s_toast_text[0] = '\0';
+    }
+}
+
+static void draw_toast_overlay(void)
+{
+    if (!s_toast_text[0]) return;
+    if (s_ctx.lua_mode) return;
+    if (!s_ctx.surface) return;
+
+    int toast_x = 40, toast_y = 20, toast_w = 240, toast_h = 40;
+    SDL_Rect bg = {toast_x, toast_y, toast_w, toast_h};
+    SDL_FillRect(s_ctx.surface, &bg, 0x0000);
+
+    uint16_t tw, th;
+    if (display_hal_measure_text(s_toast_text, 16, &tw, &th) == ESP_OK) {
+        int tx = toast_x + (toast_w - (int)tw) / 2;
+        int ty = toast_y + (toast_h - (int)th) / 2 - 5;
+        display_hal_draw_text(tx, ty, s_toast_text, 16, 0xFFFF, false, 0);
+    }
+}
+
 esp_err_t display_hal_create(esp_lcd_panel_handle_t panel_handle,
                              esp_lcd_panel_io_handle_t io_handle,
                              display_hal_panel_if_t panel_if,
@@ -1430,6 +1462,8 @@ esp_err_t display_hal_present(void)
                 return ESP_OK;
             }
         }
+
+        draw_toast_overlay();
 
         if (s_ctx.texture && s_ctx.surface) {
             SDL_UpdateTexture(s_ctx.texture, NULL,
@@ -2336,9 +2370,9 @@ esp_err_t display_hal_draw_text(int x, int y, const char *text, uint8_t font_siz
                         int inv_a = 255 - ga;
                         uint16_t result;
                         if (is_emoji) {
-                            uint8_t nr = (uint8_t)(((int)(gv & 0xFF) * ga + (int)dr * inv_a) / 255);
+                            uint8_t nb = (uint8_t)(((int)(gv & 0xFF) * ga + (int)db * inv_a) / 255);
                             uint8_t ng = (uint8_t)(((int)((gv >> 8) & 0xFF) * ga + (int)dg * inv_a) / 255);
-                            uint8_t nb = (uint8_t)(((int)((gv >> 16) & 0xFF) * ga + (int)db * inv_a) / 255);
+                            uint8_t nr = (uint8_t)(((int)((gv >> 16) & 0xFF) * ga + (int)dr * inv_a) / 255);
                             result = rgb_to_565(nr, ng, nb);
                         } else {
                             uint8_t nr = (uint8_t)(((int)tr * ga + (int)dr * inv_a) / 255);
@@ -2372,9 +2406,9 @@ esp_err_t display_hal_draw_text(int x, int y, const char *text, uint8_t font_siz
                         int inv_a = 255 - ga;
                         uint16_t result;
                         if (is_emoji) {
-                            uint8_t nr = (uint8_t)(((int)(gv & 0xFF) * ga + (int)dr * inv_a) / 255);
+                            uint8_t nb = (uint8_t)(((int)(gv & 0xFF) * ga + (int)db * inv_a) / 255);
                             uint8_t ng = (uint8_t)(((int)((gv >> 8) & 0xFF) * ga + (int)dg * inv_a) / 255);
-                            uint8_t nb = (uint8_t)(((int)((gv >> 16) & 0xFF) * ga + (int)db * inv_a) / 255);
+                            uint8_t nr = (uint8_t)(((int)((gv >> 16) & 0xFF) * ga + (int)dr * inv_a) / 255);
                             result = rgb_to_565(nr, ng, nb);
                         } else {
                             uint8_t nr = (uint8_t)(((int)tr * ga + (int)dr * inv_a) / 255);

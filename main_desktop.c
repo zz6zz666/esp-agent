@@ -121,6 +121,8 @@ extern bool display_hal_recreate_emote(void);
 extern void emote_set_network_msg(const char *msg);
 extern const char *g_screenshots_dir;
 extern esp_err_t cap_screenshot_register_group(void);
+extern const char *g_emote_config_path;
+extern esp_err_t cap_emote_text_register_group(void);
 extern void display_hal_main_loop_wait(uint32_t timeout_ms);
 
 #if defined(PLATFORM_WINDOWS)
@@ -698,9 +700,9 @@ int main(int argc, char **argv)
             "{\n"
             "  \"llm\": {\n"
             "    \"api_key\": \"\",\n"
-            "    \"model\": \"\",\n"
-            "    \"profile\": \"openai\",\n"
-            "    \"base_url\": \"\",\n"
+            "    \"model\": \"deepseek-v4-flash\",\n"
+            "    \"profile\": \"anthropic\",\n"
+            "    \"base_url\": \"https://api.deepseek.com/anthropic\",\n"
             "    \"auth_type\": \"\",\n"
             "    \"timeout_ms\": \"120000\",\n"
             "    \"max_tokens\": \"8192\"\n"
@@ -727,7 +729,7 @@ int main(int argc, char **argv)
             "  },\n"
             "  \"session\": {\n"
             "    \"context_token_budget\": \"96256\",\n"
-            "    \"max_message_chars\": \"4096\",\n"
+            "    \"max_message_chars\": \"8192\",\n"
             "    \"compress_threshold_percent\": \"80\"\n"
             "  }\n"
             "}\n";
@@ -1110,6 +1112,11 @@ int main(int argc, char **argv)
     /* Register desktop-only screenshot capability */
     cap_screenshot_register_group();
     ESP_LOGI(TAG, "cap_screenshot registered");
+
+    /* Register desktop-only emote text capability (auto-saves to config.json) */
+    g_emote_config_path = config_path;
+    cap_emote_text_register_group();
+    ESP_LOGI(TAG, "cap_emote_text registered");
 
     /* ---- set custom emote text BEFORE starting the emote engine,
      *      so emote_init_internal() -> emote_set_network_status()

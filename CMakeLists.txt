@@ -38,6 +38,7 @@ set(SIM_SRCS
     ${SIM_HAL_DIR}/lv_font_stub.c
     ${SIM_HAL_DIR}/cap_lua_sandbox.c
     ${SIM_HAL_DIR}/cap_screenshot.c
+    ${SIM_HAL_DIR}/cap_emote_text.c
     $<$<BOOL:${WIN32}>:${SIM_HAL_DIR}/memstream_stub.c>
     $<$<BOOL:${WIN32}>:${SIM_HAL_DIR}/stdout_wrapper.c>
     $<$<BOOL:${WIN32}>:${SIM_HAL_DIR}/tray_icon.c>
