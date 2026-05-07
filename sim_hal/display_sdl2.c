@@ -2131,6 +2131,31 @@ esp_err_t display_hal_measure_text(const char *text, uint8_t font_size,
 {
     if (!text || !out_w || !out_h) return ESP_ERR_INVALID_ARG;
 
+    /* Simple TTF measure cache: same (text, font_size) always gives
+       same result within a session.  Avoids expensive TTF_SizeUTF8
+       calls for static text repeated every frame. */
+#define MEASURE_CACHE_MAX 32
+    typedef struct {
+        uint32_t hash;
+        uint8_t  font_size;
+        uint16_t w, h;
+    } measure_cache_t;
+    static measure_cache_t s_measure_cache[MEASURE_CACHE_MAX];
+    static int             s_measure_cache_count = 0;
+
+    /* djb2 hash */
+    uint32_t hash = 5381;
+    for (const char *s = text; *s; s++) hash = ((hash << 5) + hash) + (unsigned char)*s;
+
+    for (int i = 0; i < s_measure_cache_count; i++) {
+        if (s_measure_cache[i].hash == hash &&
+            s_measure_cache[i].font_size == font_size) {
+            *out_w = s_measure_cache[i].w;
+            *out_h = s_measure_cache[i].h;
+            return ESP_OK;
+        }
+    }
+
     int ptsize = font_size;
     if (font_stack_load(ptsize) == 0) {
         *out_w = (uint16_t)(strlen(text) * 8 * font_size);
@@ -2177,6 +2202,15 @@ esp_err_t display_hal_measure_text(const char *text, uint8_t font_size,
 
     *out_w = (uint16_t)total_w;
     *out_h = (uint16_t)max_h;
+
+    /* Store in measure cache */
+    if (s_measure_cache_count < MEASURE_CACHE_MAX) {
+        s_measure_cache[s_measure_cache_count].hash      = hash;
+        s_measure_cache[s_measure_cache_count].font_size  = font_size;
+        s_measure_cache[s_measure_cache_count].w          = (uint16_t)total_w;
+        s_measure_cache[s_measure_cache_count].h          = (uint16_t)max_h;
+        s_measure_cache_count++;
+    }
     return ESP_OK;
 }
 
@@ -2250,32 +2284,79 @@ esp_err_t display_hal_draw_text(int x, int y, const char *text, uint8_t font_siz
             uint8_t tr, tg, tb;
             rgb565_to_rgb(text_color, &tr, &tg, &tb);
             int gw = glyph->w, gh = glyph->h, gpitch = glyph->pitch;
+            int sw = s_ctx.surf_w, sh = s_ctx.surf_h;
+            uint16_t *dst_pixels = (uint16_t *)dst_surf->pixels;
+            uint32_t *glyph_pixels = (uint32_t *)glyph->pixels;
 
-            for (int gy = 0; gy < gh; gy++) {
-                for (int gx = 0; gx < gw; gx++) {
-                    int dx = cx + gx, dy = y + gy;
-                    if (dx < 0 || dx >= s_ctx.surf_w || dy < 0 || dy >= s_ctx.surf_h) continue;
+            if (cx >= 0 && cx + gw <= sw && y >= 0 && y + gh <= sh) {
+                int dst_row_off = y * sw + cx;
+                for (int gy = 0; gy < gh; gy++) {
+                    uint16_t *dp = dst_pixels + dst_row_off + gy * sw;
+                    uint32_t *gp = glyph_pixels + gy * (gpitch / 4);
+                    for (int gx = 0; gx < gw; gx++) {
+                        uint32_t gv = gp[gx];
+                        uint8_t ga = (uint8_t)(gv >> 24);
+                        if (ga == 0) continue;
 
-                    uint32_t gp = ((uint32_t *)((uint8_t *)glyph->pixels + gy * gpitch))[gx];
-                    uint8_t ga = (uint8_t)(gp >> 24);
-                    if (ga == 0) continue;
+                        if (ga == 255 && !is_emoji) {
+                            dp[gx] = text_color;
+                            continue;
+                        }
 
-                    uint16_t *dp = &((uint16_t *)dst_surf->pixels)[dy * s_ctx.surf_w + dx];
-                    uint8_t dr, dg, db;
-                    rgb565_to_rgb(*dp, &dr, &dg, &db);
+                        uint8_t dr, dg, db;
+                        rgb565_to_rgb(dp[gx], &dr, &dg, &db);
 
-                    int inv_a = 255 - ga;
-                    uint8_t nr, ng, nb;
-                    if (is_emoji) {
-                        nr = (uint8_t)(((int)(gp & 0xFF) * ga + (int)dr * inv_a) / 255);
-                        ng = (uint8_t)(((int)((gp >> 8) & 0xFF) * ga + (int)dg * inv_a) / 255);
-                        nb = (uint8_t)(((int)((gp >> 16) & 0xFF) * ga + (int)db * inv_a) / 255);
-                    } else {
-                        nr = (uint8_t)(((int)tr * ga + (int)dr * inv_a) / 255);
-                        ng = (uint8_t)(((int)tg * ga + (int)dg * inv_a) / 255);
-                        nb = (uint8_t)(((int)tb * ga + (int)db * inv_a) / 255);
+                        int inv_a = 255 - ga;
+                        uint16_t result;
+                        if (is_emoji) {
+                            uint8_t nr = (uint8_t)(((int)(gv & 0xFF) * ga + (int)dr * inv_a) / 255);
+                            uint8_t ng = (uint8_t)(((int)((gv >> 8) & 0xFF) * ga + (int)dg * inv_a) / 255);
+                            uint8_t nb = (uint8_t)(((int)((gv >> 16) & 0xFF) * ga + (int)db * inv_a) / 255);
+                            result = rgb_to_565(nr, ng, nb);
+                        } else {
+                            uint8_t nr = (uint8_t)(((int)tr * ga + (int)dr * inv_a) / 255);
+                            uint8_t ng = (uint8_t)(((int)tg * ga + (int)dg * inv_a) / 255);
+                            uint8_t nb = (uint8_t)(((int)tb * ga + (int)db * inv_a) / 255);
+                            result = rgb_to_565(nr, ng, nb);
+                        }
+                        dp[gx] = result;
                     }
-                    *dp = rgb_to_565(nr, ng, nb);
+                }
+            } else {
+                for (int gy = 0; gy < gh; gy++) {
+                    for (int gx = 0; gx < gw; gx++) {
+                        int dx = cx + gx, dy = y + gy;
+                        if (dx < 0 || dx >= sw || dy < 0 || dy >= sh) continue;
+
+                        uint32_t gv = ((uint32_t *)((uint8_t *)glyph->pixels + gy * gpitch))[gx];
+                        uint8_t ga = (uint8_t)(gv >> 24);
+                        if (ga == 0) continue;
+
+                        uint16_t *dp = dst_pixels + dy * sw + dx;
+
+                        if (ga == 255 && !is_emoji) {
+                            *dp = text_color;
+                            continue;
+                        }
+
+                        uint8_t dr, dg, db;
+                        rgb565_to_rgb(*dp, &dr, &dg, &db);
+
+                        int inv_a = 255 - ga;
+                        uint16_t result;
+                        if (is_emoji) {
+                            uint8_t nr = (uint8_t)(((int)(gv & 0xFF) * ga + (int)dr * inv_a) / 255);
+                            uint8_t ng = (uint8_t)(((int)((gv >> 8) & 0xFF) * ga + (int)dg * inv_a) / 255);
+                            uint8_t nb = (uint8_t)(((int)((gv >> 16) & 0xFF) * ga + (int)db * inv_a) / 255);
+                            result = rgb_to_565(nr, ng, nb);
+                        } else {
+                            uint8_t nr = (uint8_t)(((int)tr * ga + (int)dr * inv_a) / 255);
+                            uint8_t ng = (uint8_t)(((int)tg * ga + (int)dg * inv_a) / 255);
+                            uint8_t nb = (uint8_t)(((int)tb * ga + (int)db * inv_a) / 255);
+                            result = rgb_to_565(nr, ng, nb);
+                        }
+                        *dp = result;
+                    }
                 }
             }
         }
