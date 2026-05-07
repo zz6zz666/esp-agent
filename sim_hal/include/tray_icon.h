@@ -34,6 +34,9 @@ bool tray_icon_quit_requested(void);
 /** Set the SDL2 window HWND for show/hide control. */
 void tray_icon_set_sdl_window(void *hwnd);
 
+/** Flash taskbar icon to get user's attention. */
+void tray_icon_show_and_flash(void);
+
 /** Check if "Always Hide Windows" is enabled in tray menu. */
 bool tray_always_hide_is_enabled(void);
 

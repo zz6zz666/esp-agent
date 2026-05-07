@@ -155,6 +155,7 @@ typedef struct {
     bool emote_visible;       /* user-intended emote visibility */
     bool emote_was_visible;   /* snapshot before lua takeover */
     bool always_hide;
+    bool lua_just_switched;   /* true for one frame after switch to lua */
     /* Lifecycle ops delegated from worker thread to main thread */
     bool lifecycle_pending;
     int  lifecycle_op;        /* 0=none, 1=create, 2=destroy */
@@ -588,6 +589,18 @@ void display_hal_set_always_hide(bool on)
 bool display_hal_is_always_hide(void)
 {
     return s_ctx.always_hide;
+}
+
+bool display_hal_is_lua_mode(void)
+{
+    return s_ctx.lua_mode;
+}
+
+bool display_hal_consume_lua_switch_notification(void)
+{
+    bool was_switched = s_ctx.lua_just_switched;
+    s_ctx.lua_just_switched = false;
+    return was_switched;
 }
 
 void display_hal_save_window_position(void)
@@ -1309,6 +1322,7 @@ esp_err_t display_hal_present(void)
             }
             SDL_SetWindowPosition(s_ctx.window, wx, wy);
             s_ctx.lua_mode = target_lua;
+            s_ctx.lua_just_switched = target_lua;
             apply_window_effects(s_ctx.window);
 
             if (target_lua && s_ctx.always_hide) {

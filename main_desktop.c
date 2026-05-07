@@ -113,6 +113,8 @@ extern void display_hal_set_emote_visible(bool vis);
 extern bool display_hal_is_emote_visible(void);
 extern void display_hal_set_always_hide(bool on);
 extern bool display_hal_is_always_hide(void);
+extern bool display_hal_is_lua_mode(void);
+extern bool display_hal_consume_lua_switch_notification(void);
 extern void display_hal_save_window_position(void);
 extern bool display_hal_recreate_emote(void);
 
@@ -1135,24 +1137,26 @@ int main(int argc, char **argv)
         display_hal_set_always_hide(tray_always_hide_is_enabled());
 
         /* Sync emote visibility from tray icon state */
-        if (display_hal_is_emote_visible() != tray_icon_is_window_visible()) {
-            display_hal_set_emote_visible(tray_icon_is_window_visible());
-            if (display_hal_is_active() && !display_hal_is_emote_visible()) {
-                display_hal_hide_window();
+        if (!display_hal_is_lua_mode()) {
+            if (display_hal_is_emote_visible() != tray_icon_is_window_visible()) {
+                display_hal_set_emote_visible(tray_icon_is_window_visible());
+                if (display_hal_is_active() && !display_hal_is_emote_visible()) {
+                    display_hal_hide_window();
+                }
             }
-        }
-        /* Ensure emote window exists if user wants it visible
-           (may be NULL after lua destroyed it while user clicked Show) */
-        if (display_hal_is_emote_visible()) {
-            if (display_hal_recreate_emote()) {
-                /* Re-apply tray icon to the new emote window */
-                void *hwnd = display_hal_get_native_window();
-                if (hwnd) tray_icon_set_sdl_window(hwnd);
+            /* Ensure emote window exists if user wants it visible
+               (may be NULL after lua destroyed it while user clicked Show) */
+            if (display_hal_is_emote_visible()) {
+                if (display_hal_recreate_emote()) {
+                    /* Re-apply tray icon to the new emote window */
+                    void *hwnd = display_hal_get_native_window();
+                    if (hwnd) tray_icon_set_sdl_window(hwnd);
+                }
             }
         }
 #endif
         /* Custom title bar minimize button */
-        if (display_hal_title_minimize_hit()) {
+        if (!display_hal_is_lua_mode() && display_hal_title_minimize_hit()) {
             display_hal_hide_window();
 #if defined(PLATFORM_WINDOWS)
             tray_icon_hide_window();
@@ -1160,6 +1164,13 @@ int main(int argc, char **argv)
         }
         display_hal_present();             /* always pump — processes lifecycle ops */
 #if defined(PLATFORM_WINDOWS)
+        if (display_hal_consume_lua_switch_notification()) {
+            void *hwnd = display_hal_get_native_window();
+            if (hwnd) {
+                tray_icon_set_sdl_window(hwnd);
+                tray_icon_show_and_flash();
+            }
+        }
         /* Refresh tray icon window handle (may change after emote recreation) */
         if (display_hal_is_active() && !display_hal_is_emote_visible()) {
             /* Window exists but user wants it hidden — keep hidden */

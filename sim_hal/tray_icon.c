@@ -52,6 +52,8 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
 static bool tray_autostart_is_enabled(void);
 static void tray_autostart_set_enabled(bool enable);
 
+extern bool display_hal_is_lua_mode(void);
+
 /* ---- Public API ---- */
 
 bool tray_icon_init(void)
@@ -316,21 +318,54 @@ void tray_icon_set_sdl_window(void *hwnd)
 {
     if ((HWND)hwnd == s_sdl_hwnd) return;
     s_sdl_hwnd = (HWND)hwnd;
-    /* Remove from taskbar — tray icon is the primary UI surface */
+
     LONG_PTR ex_style = GetWindowLongPtrA(s_sdl_hwnd, GWL_EXSTYLE);
-    SetWindowLongPtrA(s_sdl_hwnd, GWL_EXSTYLE, ex_style | WS_EX_TOOLWINDOW);
-    /* Re-show to apply the style change, without stealing focus */
+
+    if (display_hal_is_lua_mode()) {
+        ex_style |= WS_EX_APPWINDOW;
+        ex_style &= ~WS_EX_TOOLWINDOW;
+    } else {
+        ex_style |= WS_EX_TOOLWINDOW;
+        ex_style &= ~WS_EX_APPWINDOW;
+    }
+    SetWindowLongPtrA(s_sdl_hwnd, GWL_EXSTYLE, ex_style);
+
     ShowWindow(s_sdl_hwnd, SW_HIDE);
     ShowWindow(s_sdl_hwnd, SW_SHOWNOACTIVATE);
+}
+
+void tray_icon_flash_start(void)
+{
+    if (!s_sdl_hwnd || !s_nid.hWnd) return;
+    FlashWindow(s_sdl_hwnd, TRUE);
+}
+
+void tray_icon_flash_stop(void)
+{
+    if (!s_sdl_hwnd) return;
+    FLASHWINFO fi = {sizeof(FLASHWINFO), s_sdl_hwnd, FLASHW_STOP, 0, 0};
+    FlashWindowEx(&fi);
+}
+
+void tray_icon_show_and_flash(void)
+{
+    if (!s_sdl_hwnd) return;
+    FLASHWINFO fi = {sizeof(FLASHWINFO), s_sdl_hwnd, FLASHW_ALL | FLASHW_TIMERNOFG, 3, 500};
+    FlashWindowEx(&fi);
 }
 
 void tray_icon_show_window(void)
 {
     if (s_sdl_hwnd) {
-        ShowWindow(s_sdl_hwnd, SW_SHOWNOACTIVATE);
-        /* Restore WS_EX_TOPMOST (stripped during hide) */
-        LONG exstyle = GetWindowLong(s_sdl_hwnd, GWL_EXSTYLE);
-        SetWindowLong(s_sdl_hwnd, GWL_EXSTYLE, exstyle | WS_EX_TOPMOST);
+        if (display_hal_is_lua_mode()) {
+            ShowWindow(s_sdl_hwnd, SW_RESTORE);
+            SetForegroundWindow(s_sdl_hwnd);
+            BringWindowToTop(s_sdl_hwnd);
+        } else {
+            ShowWindow(s_sdl_hwnd, SW_SHOWNOACTIVATE);
+            LONG exstyle = GetWindowLong(s_sdl_hwnd, GWL_EXSTYLE);
+            SetWindowLong(s_sdl_hwnd, GWL_EXSTYLE, exstyle | WS_EX_TOPMOST);
+        }
     }
     s_window_visible = true;
 }
@@ -338,13 +373,14 @@ void tray_icon_show_window(void)
 void tray_icon_hide_window(void)
 {
     if (s_sdl_hwnd) {
-        /* Strip WS_EX_TOPMOST so the OS releases focus and Z-order
-           cleanly — a hidden topmost window can still contend for
-           activation, causing ghost-border flashes and focus stealing. */
-        LONG exstyle = GetWindowLong(s_sdl_hwnd, GWL_EXSTYLE);
-        if (exstyle & WS_EX_TOPMOST)
-            SetWindowLong(s_sdl_hwnd, GWL_EXSTYLE, exstyle & ~WS_EX_TOPMOST);
-        ShowWindow(s_sdl_hwnd, SW_HIDE);
+        if (display_hal_is_lua_mode()) {
+            ShowWindow(s_sdl_hwnd, SW_MINIMIZE);
+        } else {
+            LONG exstyle = GetWindowLong(s_sdl_hwnd, GWL_EXSTYLE);
+            if (exstyle & WS_EX_TOPMOST)
+                SetWindowLong(s_sdl_hwnd, GWL_EXSTYLE, exstyle & ~WS_EX_TOPMOST);
+            ShowWindow(s_sdl_hwnd, SW_HIDE);
+        }
     }
     s_window_visible = false;
 }
