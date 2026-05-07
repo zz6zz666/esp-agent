@@ -464,6 +464,24 @@ static SDL_HitTestResult hit_test_cb(SDL_Window *win, const SDL_Point *area,
     return SDL_HITTEST_NORMAL;
 }
 
+static void bring_window_to_front(SDL_Window *win)
+{
+    if (!win) return;
+#if defined(PLATFORM_WINDOWS)
+    SDL_SysWMinfo wm;
+    SDL_VERSION(&wm.version);
+    if (SDL_GetWindowWMInfo(win, &wm)) {
+        HWND hwnd = wm.info.win.window;
+        AllowSetForegroundWindow(ASFW_ANY);
+        BringWindowToTop(hwnd);
+        SetForegroundWindow(hwnd);
+        SetFocus(hwnd);
+    }
+#else
+    SDL_RaiseWindow(win);
+#endif
+}
+
 static void apply_window_effects(SDL_Window *win)
 {
     if (!win) return;
@@ -1163,6 +1181,8 @@ esp_err_t display_hal_present(void)
 
                 if (s_ctx.always_hide) {
                     display_hal_hide_window();
+                } else {
+                    bring_window_to_front(s_ctx.window);
                 }
 
                 s_ctx.renderer = SDL_CreateRenderer(s_ctx.window, -1,
@@ -1334,6 +1354,9 @@ esp_err_t display_hal_present(void)
 
             if (target_lua && s_ctx.always_hide) {
                 display_hal_hide_window();
+            }
+            if (!s_ctx.always_hide) {
+                bring_window_to_front(s_ctx.window);
             }
 
             Uint32 ren_flags = SDL_RENDERER_ACCELERATED;

@@ -39,6 +39,7 @@
 #include "claw_skill.h"
 #include "display_hal.h"
 #include "display_hal_input.h"
+#include "emote.h"
 #include "component_desktop.h"
 #include "esp_console.h"
 #include "esp_err.h"
@@ -1176,6 +1177,8 @@ int main(int argc, char **argv)
                     /* Re-apply tray icon to the new emote window */
                     void *hwnd = display_hal_get_native_window();
                     if (hwnd) tray_icon_set_sdl_window(hwnd);
+                    /* Force emote to redraw text/layers on the new surface */
+                    emote_refresh_display();
                 }
             }
         }
