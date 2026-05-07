@@ -240,6 +240,13 @@ void emote_set_network_msg(const char *msg)
     }
 }
 
+void emote_refresh_display(void)
+{
+    if (s_emote_handle) {
+        emote_notify_all_refresh(s_emote_handle);
+    }
+}
+
 esp_err_t emote_set_network_status(bool sta_connected, const char *ap_ssid)
 {
     ESP_RETURN_ON_FALSE(s_emote_handle != NULL, ESP_ERR_INVALID_STATE, TAG,
