@@ -38,6 +38,10 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb_image_write.h"
+#include "display_screenshot.h"
+
 static const char *TAG = "display_sdl2";
 
 /* ---- Font stack (multi-font fallback for emoji / symbols / CJK) ---- */
@@ -2620,4 +2624,65 @@ esp_err_t display_hal_draw_jpeg_scaled(int x, int y,
     if (out_w) *out_w = 0;
     if (out_h) *out_h = 0;
     return ESP_ERR_NOT_SUPPORTED;
+}
+
+esp_err_t display_hal_screenshot(const char *path, int quality)
+{
+    uint8_t *rgb   = NULL;
+    size_t   rgb_sz;
+    int      w, h;
+    int      y;
+    int      result;
+    esp_err_t err = ESP_OK;
+
+    if (!path || !path[0]) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (!s_ctx.surface) {
+        ESP_LOGW(TAG, "screenshot: no surface available");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    w = s_ctx.surf_w;
+    h = s_ctx.surf_h;
+    if (w <= 0 || h <= 0) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (quality < 1)  quality = 1;
+    if (quality > 100) quality = 100;
+
+    rgb_sz = (size_t)w * h * 3;
+    rgb = malloc(rgb_sz);
+    if (!rgb) {
+        return ESP_ERR_NO_MEM;
+    }
+
+    SDL_LockSurface(s_ctx.surface);
+
+    for (y = 0; y < h; y++) {
+        uint16_t *src = (uint16_t *)((uint8_t *)s_ctx.surface->pixels +
+                                     (size_t)y * s_ctx.surface->pitch);
+        uint8_t  *dst = rgb + (size_t)y * w * 3;
+        int       x;
+
+        for (x = 0; x < w; x++) {
+            uint16_t c = src[x];
+            dst[x * 3 + 0] = (uint8_t)((c >> 8) & 0xF8);
+            dst[x * 3 + 1] = (uint8_t)((c >> 3) & 0xFC);
+            dst[x * 3 + 2] = (uint8_t)((c << 3) & 0xF8);
+        }
+    }
+
+    SDL_UnlockSurface(s_ctx.surface);
+
+    result = stbi_write_jpg(path, w, h, 3, rgb, quality);
+    free(rgb);
+
+    if (!result) {
+        ESP_LOGE(TAG, "screenshot: stbi_write_jpg failed for %s", path);
+        err = ESP_FAIL;
+    }
+
+    return err;
 }

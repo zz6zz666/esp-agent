@@ -118,6 +118,8 @@ extern bool display_hal_consume_lua_switch_notification(void);
 extern void display_hal_save_window_position(void);
 extern bool display_hal_recreate_emote(void);
 extern void emote_set_network_msg(const char *msg);
+extern const char *g_screenshots_dir;
+extern esp_err_t cap_screenshot_register_group(void);
 extern void display_hal_main_loop_wait(uint32_t timeout_ms);
 
 #if defined(PLATFORM_WINDOWS)
@@ -640,6 +642,7 @@ int main(int argc, char **argv)
     char abs_router_rules[PATH_MAX];
     char abs_scheduler[PATH_MAX];
     char abs_inbox[PATH_MAX];
+    char abs_screenshots[PATH_MAX];
     snprintf(abs_sessions, sizeof(abs_sessions), "%s/sessions", abs_data_dir);
     snprintf(abs_memory, sizeof(abs_memory), "%s/memory", abs_data_dir);
     snprintf(abs_skills, sizeof(abs_skills), "%s/skills", abs_data_dir);
@@ -647,6 +650,7 @@ int main(int argc, char **argv)
     snprintf(abs_router_rules, sizeof(abs_router_rules), "%s/router_rules/router_rules.json", abs_data_dir);
     snprintf(abs_scheduler, sizeof(abs_scheduler), "%s/scheduler/schedules.json", abs_data_dir);
     snprintf(abs_inbox, sizeof(abs_inbox), "%s/inbox", abs_data_dir);
+    snprintf(abs_screenshots, sizeof(abs_screenshots), "%s/screenshots", abs_data_dir);
 #pragma GCC diagnostic pop
 
     /* Ensure all sub-directories exist */
@@ -664,7 +668,10 @@ int main(int argc, char **argv)
         snprintf(tmp, sizeof(tmp), "%s/scheduler", abs_data_dir);
         mkdir_p(tmp);
         mkdir_p(abs_inbox);
+        mkdir_p(abs_screenshots);
     }
+
+    g_screenshots_dir = abs_screenshots;
 
     /* Seed from system defaults on first run */
     seed_defaults(abs_data_dir);
@@ -1098,6 +1105,10 @@ int main(int argc, char **argv)
         }
     }
 #endif
+
+    /* Register desktop-only screenshot capability */
+    cap_screenshot_register_group();
+    ESP_LOGI(TAG, "cap_screenshot registered");
 
     /* ---- set custom emote text BEFORE starting the emote engine,
      *      so emote_init_internal() -> emote_set_network_status()

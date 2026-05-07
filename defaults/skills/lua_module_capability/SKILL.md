@@ -10,10 +10,10 @@
 
 This skill describes how to call registered capabilities directly from Lua.
 
-> **Critical:** `capability.call` from Lua is restricted to a fixed allowlist of 16 capabilities. Calling any other capability (including `read_file`, `write_file`, `delete_file`, all IM sends, `memory_store`, `run_cli_command`, etc.) will error with `"cap '<name>' not allowed from Lua"`. For file operations in Lua, use `require("storage")` instead. For everything else, call the capabilities directly from outside Lua (agent tools).
+> **Critical:** `capability.call` from Lua is restricted to a fixed allowlist of 17 capabilities. Calling any other capability (including `read_file`, `write_file`, `delete_file`, all IM sends, `memory_store`, `run_cli_command`, etc.) will error with `"cap '<name>' not allowed from Lua"`. For file operations in Lua, use `require("storage")` instead. For everything else, call the capabilities directly from outside Lua (agent tools).
 
 ## Allowed Capabilities
-Only these 16 capability IDs can be called from Lua:
+Only these 17 capability IDs can be called from Lua:
 
 | Capability | Purpose |
 |---|---|
@@ -32,6 +32,7 @@ Only these 16 capability IDs can be called from Lua:
 | `lua_run_script` | Run script synchronously |
 | `lua_list_async_jobs` | List async jobs |
 | `lua_get_async_job` | Get async job details |
+| `screenshot` | Capture JPEG screenshot |
 
 ## How to call
 - Import it with `local capability = require("capability")`

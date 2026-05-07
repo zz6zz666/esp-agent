@@ -494,3 +494,14 @@ display.present()
 display.end_frame()
 display.deinit()
 ```
+
+## Screenshot
+
+To capture the current rendered frame as a JPEG file, use the `screenshot` capability:
+
+```lua
+local cap = require("capability")
+cap.call("screenshot", '{"quality": 85}')
+```
+
+The screenshot is saved to `~/.crush-claw/screenshots/` with a timestamp-based filename. Call while a frame is active (between `begin_frame` and `end_frame`) to capture script-rendered content.

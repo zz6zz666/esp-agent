@@ -174,6 +174,7 @@ static const char *const s_cap_allowlist[] = {
     "lua_run_script",
     "lua_list_async_jobs",
     "lua_get_async_job",
+    "screenshot",
     NULL,
 };
 

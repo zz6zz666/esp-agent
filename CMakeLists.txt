@@ -37,6 +37,7 @@ set(SIM_SRCS
     ${SIM_HAL_DIR}/esp_mmap_assets_stub.c
     ${SIM_HAL_DIR}/lv_font_stub.c
     ${SIM_HAL_DIR}/cap_lua_sandbox.c
+    ${SIM_HAL_DIR}/cap_screenshot.c
     $<$<BOOL:${WIN32}>:${SIM_HAL_DIR}/memstream_stub.c>
     $<$<BOOL:${WIN32}>:${SIM_HAL_DIR}/stdout_wrapper.c>
     $<$<BOOL:${WIN32}>:${SIM_HAL_DIR}/tray_icon.c>
@@ -159,6 +160,8 @@ set(COMMON_INCLUDES
     ${SIM_INC_DIR}/mbedtls
     ${SIM_INC_DIR}/lwip
     ${SIM_INC_DIR}/platform
+    # stb single-header libs
+    ${SIM_HAL_DIR}/deps/stb
     # claw_modules
     ${ESPCLAW_COMPONENTS}/claw_modules/claw_core/include
     ${ESPCLAW_COMPONENTS}/claw_modules/claw_core/src
