@@ -193,12 +193,16 @@ static double s_disp_t0 = 0; /* startup timer base for display_hal_create */
 static pthread_mutex_t s_present_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t s_present_cond = PTHREAD_COND_INITIALIZER;
 static volatile bool g_present_pending = false;
+static pthread_mutex_t s_main_loop_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t s_main_loop_cond = PTHREAD_COND_INITIALIZER;
+static volatile bool g_main_loop_wake = false;
 static bool s_ttf_ok = false;
 
 /* ---- Glyph cache (avoids re-rasterizing emoji / text every frame) ---- */
 #define GLYPH_CACHE_MAX 512
 #define GLYPH_CACHE_MAGIC 0xCAFE
 #define GLYPH_CACHE_BIN "glyph_cache.bin"
+#define GLYPH_COLOR_SENTINEL 0xFFFF   /* Cache key: all glyphs stored as white */
 static pthread_mutex_t s_glyph_disk_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 typedef struct {
@@ -1158,8 +1162,7 @@ esp_err_t display_hal_present(void)
                 }
 
                 s_ctx.renderer = SDL_CreateRenderer(s_ctx.window, -1,
-                                                     SDL_RENDERER_ACCELERATED |
-                                                     SDL_RENDERER_PRESENTVSYNC);
+                                                     SDL_RENDERER_ACCELERATED);
                 if (!s_ctx.renderer) {
                     ESP_LOGE(TAG, "Lifecycle create: SDL_CreateRenderer failed: %s",
                              SDL_GetError());
@@ -1329,9 +1332,9 @@ esp_err_t display_hal_present(void)
                 display_hal_hide_window();
             }
 
-            s_ctx.renderer = SDL_CreateRenderer(s_ctx.window, -1,
-                                                 SDL_RENDERER_ACCELERATED |
-                                                 SDL_RENDERER_PRESENTVSYNC);
+            Uint32 ren_flags = SDL_RENDERER_ACCELERATED;
+            if (!target_lua) ren_flags |= SDL_RENDERER_PRESENTVSYNC;
+            s_ctx.renderer = SDL_CreateRenderer(s_ctx.window, -1, ren_flags);
             if (!s_ctx.renderer) {
                 ESP_LOGE(TAG, "Mode switch: SDL_CreateRenderer failed: %s",
                          SDL_GetError());
@@ -1386,6 +1389,19 @@ esp_err_t display_hal_present(void)
             }
             pthread_mutex_unlock(&s_present_mutex);
             return ESP_OK;
+        }
+
+        /* In Lua mode, skip GPU rendering when no frame is pending.
+           This prevents unnecessary VSYNC waits and GPU work when the
+           script is between frames (e.g. during delay.delay_ms). */
+        if (s_ctx.lua_mode) {
+            bool has_pending = false;
+            pthread_mutex_lock(&s_present_mutex);
+            has_pending = g_present_pending;
+            pthread_mutex_unlock(&s_present_mutex);
+            if (!has_pending) {
+                return ESP_OK;
+            }
         }
 
         if (s_ctx.texture && s_ctx.surface) {
@@ -1475,6 +1491,12 @@ esp_err_t display_hal_present(void)
         pthread_mutex_lock(&s_present_mutex);
         g_present_pending = true;
         pthread_cond_broadcast(&s_present_cond);
+        pthread_mutex_unlock(&s_present_mutex);
+        
+        /* Wake up main loop to render immediately */
+        display_hal_wake_main_loop();
+        
+        pthread_mutex_lock(&s_present_mutex);
         while (g_present_pending) {
             pthread_cond_wait(&s_present_cond, &s_present_mutex);
         }
@@ -1512,6 +1534,43 @@ esp_err_t display_hal_end_frame(void)
 {
     s_ctx.frame_active = false;
     return ESP_OK;
+}
+
+void display_hal_wake_main_loop(void)
+{
+    pthread_mutex_lock(&s_main_loop_mutex);
+    g_main_loop_wake = true;
+    pthread_cond_signal(&s_main_loop_cond);
+    pthread_mutex_unlock(&s_main_loop_mutex);
+}
+
+void display_hal_main_loop_wait(uint32_t timeout_ms)
+{
+    if (timeout_ms == 0) {
+        /* Wait indefinitely */
+        pthread_mutex_lock(&s_main_loop_mutex);
+        while (!g_main_loop_wake) {
+            pthread_cond_wait(&s_main_loop_cond, &s_main_loop_mutex);
+        }
+        g_main_loop_wake = false;
+        pthread_mutex_unlock(&s_main_loop_mutex);
+    } else {
+        /* Wait with timeout */
+        pthread_mutex_lock(&s_main_loop_mutex);
+        if (!g_main_loop_wake) {
+            struct timespec ts;
+            clock_gettime(CLOCK_REALTIME, &ts);
+            ts.tv_sec += timeout_ms / 1000;
+            ts.tv_nsec += (timeout_ms % 1000) * 1000000;
+            if (ts.tv_nsec >= 1000000000) {
+                ts.tv_sec++;
+                ts.tv_nsec -= 1000000000;
+            }
+            pthread_cond_timedwait(&s_main_loop_cond, &s_main_loop_mutex, &ts);
+        }
+        g_main_loop_wake = false;
+        pthread_mutex_unlock(&s_main_loop_mutex);
+    }
 }
 
 bool display_hal_is_frame_active(void)
@@ -1777,7 +1836,6 @@ static int font_stack_load(int ptsize)
     if (s_font_stack_count > 0 && ptsize == s_font_stack_ptsize)
         return s_font_stack_count;
 
-    glyph_cache_clear();
     font_stack_close();
     s_font_stack_ptsize = ptsize;
 
@@ -2066,7 +2124,6 @@ static void glyph_cache_insert(Uint32 cp, int ptsize, int font_idx,
     pthread_mutex_lock(&s_glyph_cache_mutex);
     glyph_cache_add_entry(cp, ptsize, font_idx, color565, surf);
     pthread_mutex_unlock(&s_glyph_cache_mutex);
-    glyph_cache_save(cp, ptsize, font_idx, color565, surf);
 }
 
 esp_err_t display_hal_measure_text(const char *text, uint8_t font_size,
@@ -2132,8 +2189,9 @@ esp_err_t display_hal_draw_text(int x, int y, const char *text, uint8_t font_siz
     if (font_stack_load(ptsize) == 0) return ESP_OK;
 
     int line_h = font_stack_line_height();
-    SDL_Color fg = { 0, 0, 0, 255 };
-    rgb565_to_rgb(text_color, &fg.r, &fg.g, &fg.b);
+    /* Always render glyphs in white — cache is color-independent.
+       Colour is applied per-pixel during the tinted blit below. */
+    SDL_Color fg = { 255, 255, 255, 255 };
 
     const char *p = text;
     int cx = x;
@@ -2151,7 +2209,7 @@ esp_err_t display_hal_draw_text(int x, int y, const char *text, uint8_t font_siz
         /* Check glyph cache — large emoji bitmaps are expensive to
            re-rasterize every frame, so we keep pre-rendered surfaces. */
         SDL_Surface *glyph = glyph_cache_lookup(cp, ptsize, font_idx,
-                                                 text_color);
+                                                 GLYPH_COLOR_SENTINEL);
 
         if (!glyph) {
             char mb[5];
@@ -2161,9 +2219,6 @@ esp_err_t display_hal_draw_text(int x, int y, const char *text, uint8_t font_siz
             glyph = TTF_RenderUTF8_Blended(font, mb, fg);
             if (!glyph) continue;
 
-            /* Noto Color Emoji uses fixed-size bitmaps (~136 px).
-               Scale down to the text line height so emoji don't
-               dwarf surrounding CJK text. */
             if (glyph->h > line_h * 3 / 2) {
                 float scale = (float)line_h / (float)glyph->h;
                 int new_w = (int)(glyph->w * scale);
@@ -2179,15 +2234,51 @@ esp_err_t display_hal_draw_text(int x, int y, const char *text, uint8_t font_siz
             }
 
             SDL_SetSurfaceBlendMode(glyph, SDL_BLENDMODE_BLEND);
-            glyph_cache_insert(cp, ptsize, font_idx, text_color, glyph);
+            glyph_cache_insert(cp, ptsize, font_idx, GLYPH_COLOR_SENTINEL, glyph);
         }
 
         if (has_bg) {
             SDL_Rect bg_rect = { cx, y, glyph->w, glyph->h };
             SDL_FillRect(draw_surface(), &bg_rect, bg_color);
         }
-        SDL_Rect dst = { cx, y, glyph->w, glyph->h };
-        SDL_BlitSurface(glyph, NULL, draw_surface(), &dst);
+
+        /* Tinted alpha-blit: glyph stored in white, apply text_color on the fly.
+           Emoji glyphs (from the colour-emoji font) keep their native colours. */
+        {
+            SDL_Surface *dst_surf = draw_surface();
+            bool is_emoji = (cp > 0xFFFF && font_idx == s_font_stack_count - 1);
+            uint8_t tr, tg, tb;
+            rgb565_to_rgb(text_color, &tr, &tg, &tb);
+            int gw = glyph->w, gh = glyph->h, gpitch = glyph->pitch;
+
+            for (int gy = 0; gy < gh; gy++) {
+                for (int gx = 0; gx < gw; gx++) {
+                    int dx = cx + gx, dy = y + gy;
+                    if (dx < 0 || dx >= s_ctx.surf_w || dy < 0 || dy >= s_ctx.surf_h) continue;
+
+                    uint32_t gp = ((uint32_t *)((uint8_t *)glyph->pixels + gy * gpitch))[gx];
+                    uint8_t ga = (uint8_t)(gp >> 24);
+                    if (ga == 0) continue;
+
+                    uint16_t *dp = &((uint16_t *)dst_surf->pixels)[dy * s_ctx.surf_w + dx];
+                    uint8_t dr, dg, db;
+                    rgb565_to_rgb(*dp, &dr, &dg, &db);
+
+                    int inv_a = 255 - ga;
+                    uint8_t nr, ng, nb;
+                    if (is_emoji) {
+                        nr = (uint8_t)(((int)(gp & 0xFF) * ga + (int)dr * inv_a) / 255);
+                        ng = (uint8_t)(((int)((gp >> 8) & 0xFF) * ga + (int)dg * inv_a) / 255);
+                        nb = (uint8_t)(((int)((gp >> 16) & 0xFF) * ga + (int)db * inv_a) / 255);
+                    } else {
+                        nr = (uint8_t)(((int)tr * ga + (int)dr * inv_a) / 255);
+                        ng = (uint8_t)(((int)tg * ga + (int)dg * inv_a) / 255);
+                        nb = (uint8_t)(((int)tb * ga + (int)db * inv_a) / 255);
+                    }
+                    *dp = rgb_to_565(nr, ng, nb);
+                }
+            }
+        }
         cx += glyph->w;
     }
     return ESP_OK;

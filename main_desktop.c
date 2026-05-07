@@ -117,6 +117,7 @@ extern bool display_hal_is_lua_mode(void);
 extern bool display_hal_consume_lua_switch_notification(void);
 extern void display_hal_save_window_position(void);
 extern bool display_hal_recreate_emote(void);
+extern void display_hal_main_loop_wait(uint32_t timeout_ms);
 
 #if defined(PLATFORM_WINDOWS)
 # include "tray_icon.h"
@@ -1180,7 +1181,12 @@ int main(int argc, char **argv)
         }
 #endif
         if (display_hal_is_active()) {
-            vTaskDelay(pdMS_TO_TICKS(16)); /* ~60 Hz when rendering */
+            /* In Lua mode, wait for script to signal (woken by display.present) */
+            if (display_hal_is_lua_mode()) {
+                display_hal_main_loop_wait(100); /* Wait up to 100ms, or until woken */
+            } else {
+                vTaskDelay(pdMS_TO_TICKS(16)); /* ~60 Hz when rendering emote */
+            }
         } else {
             vTaskDelay(pdMS_TO_TICKS(100));
         }
