@@ -11,7 +11,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-VERSION="1.0.0"
+VERSION="1.0.1"
 ARCH="amd64"
 PKG_NAME="crush-claw_${VERSION}_${ARCH}.deb"
 BUILD_DIR="build"

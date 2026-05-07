@@ -1,5 +1,5 @@
 #define MyAppName "Crush Claw"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.1.0"
 #define MyAppPublisher "Crush Claw"
 #define MyAppURL "https://github.com/zz6zz666/crush-claw"
 #define MyAppExeName "crush-claw.exe"
@@ -36,6 +36,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: checkedonce
 Name: "path"; Description: "Add to &PATH environment variable (run crush-claw from any terminal)"; GroupDescription: "Environment:"; Flags: checkedonce
 Name: "autostart"; Description: "Auto-start on &login"; GroupDescription: "Startup:"; Flags: checkedonce
+Name: "autoupdate"; Description: "Check for &updates on startup"; GroupDescription: "Updates:"; Flags: checkedonce
 
 [Files]
 ; Main binaries
@@ -118,6 +119,14 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; \
     ValueType: string; ValueName: "Crush Claw"; \
     ValueData: """{app}\{#MyAgentExeName}"" --daemon"; \
     Tasks: autostart
+
+; Auto-check for updates (per-user)
+Root: HKCU; Subkey: "Software\crush-claw"; \
+    ValueType: dword; ValueName: "AutoUpdate"; ValueData: "1"; \
+    Tasks: autoupdate
+Root: HKCU; Subkey: "Software\crush-claw"; \
+    ValueType: dword; ValueName: "AutoUpdate"; ValueData: "0"; \
+    Tasks: not autoupdate
 
 [Run]
 ; Launch agent as background daemon (no console, no log tail)

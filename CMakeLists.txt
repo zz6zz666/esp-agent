@@ -193,17 +193,17 @@ set(COMMON_INCLUDES
     # display arbiter
     ${ESPCLAW_COMPONENTS}/common/display_arbiter/include
     # Lua modules display HAL
-    ${ESPCLAW_COMPONENTS}/lua_modules/lua_module_display/include
+    ${ESPCLAW_COMPONENTS}/lua_modules/lua_module_display/src
 
     # Lua modules board manager
-    ${ESPCLAW_COMPONENTS}/lua_modules/lua_module_board_manager/include
+    ${ESPCLAW_COMPONENTS}/lua_modules/lua_module_board_manager/src
     # Lua modules call capability
-    ${ESPCLAW_COMPONENTS}/lua_modules/lua_module_call_capability/include
+    ${ESPCLAW_COMPONENTS}/lua_modules/lua_module_call_capability/src
     # Lua modules: delay, storage, system, event_publisher
-    ${ESPCLAW_COMPONENTS}/lua_modules/lua_module_delay/include
-    ${ESPCLAW_COMPONENTS}/lua_modules/lua_module_storage/include
-    ${ESPCLAW_COMPONENTS}/lua_modules/lua_module_system/include
-    ${ESPCLAW_COMPONENTS}/lua_modules/lua_module_event_publisher/include
+    ${ESPCLAW_COMPONENTS}/lua_modules/lua_module_delay/src
+    ${ESPCLAW_COMPONENTS}/lua_modules/lua_module_storage/src
+    ${ESPCLAW_COMPONENTS}/lua_modules/lua_module_system/src
+    ${ESPCLAW_COMPONENTS}/lua_modules/lua_module_event_publisher/src
     # deps: LVGL stub header (font types only)
     ${DEPS_DIR}/lvgl
     # deps: SoC stubs
@@ -345,7 +345,7 @@ set(ESPCLAW_SRCS
     ${ESPCLAW_COMPONENTS}/lua_modules/lua_module_display/src/lua_module_display.c
 
     # lua_module_board_manager (simulated board info)
-    ${ESPCLAW_COMPONENTS}/lua_modules/lua_module_board_manager/lua_module_board_manager.c
+    ${ESPCLAW_COMPONENTS}/lua_modules/lua_module_board_manager/src/lua_module_board_manager.c
 
     # lua_module_call_capability (call cap from Lua)
     ${ESPCLAW_COMPONENTS}/lua_modules/lua_module_call_capability/src/lua_module_capability.c
@@ -411,6 +411,7 @@ if(WIN32)
         ssl         # OpenSSL (WebSocket / AES / MD5)
         crypto      # OpenSSL crypto
         dwmapi      # DWM shadow/rounded corners
+        winhttp     # GitHub auto-update check
     )
 else()
     target_link_libraries(esp-claw-desktop PRIVATE

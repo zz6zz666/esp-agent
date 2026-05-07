@@ -46,7 +46,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-#define CRUSH_CLAW_VERSION "1.0.0"
+#define CRUSH_CLAW_VERSION "1.1.0"
 
 /* ---- Startup watchdog ---- */
 #include <time.h>
@@ -184,7 +184,7 @@ static void json_get_int(cJSON *obj, const char *key, int *out)
 static void write_default_json(const char *path, const char *content)
 {
     if (access(path, F_OK) == 0) return;
-    FILE *fp = fopen(path, "w");
+    FILE *fp = fopen(path, "wb");
     if (fp) {
         fputs(content, fp);
         fclose(fp);
@@ -251,10 +251,10 @@ static void seed_defaults(const char *data_dir)
         return;
     }
 
-    char skills_list[PATH_MAX];
-    snprintf(skills_list, sizeof(skills_list), "%s/skills/skills_list.json", data_dir);
-    if (access(skills_list, F_OK) == 0) {
-        ESP_LOGI(TAG, "Seed defaults: already seeded (%s exists)", skills_list);
+    char seeded_marker[PATH_MAX];
+    snprintf(seeded_marker, sizeof(seeded_marker), "%s/skills/cap_im_feishu/SKILL.md", data_dir);
+    if (access(seeded_marker, F_OK) == 0) {
+        ESP_LOGI(TAG, "Seed defaults: already seeded (%s exists)", seeded_marker);
         return;
     }
 
@@ -708,6 +708,11 @@ int main(int argc, char **argv)
             "    \"enabled\": true,\n"
             "    \"lcd_width\": 480,\n"
             "    \"lcd_height\": 480\n"
+            "  },\n"
+            "  \"session\": {\n"
+            "    \"context_token_budget\": \"96256\",\n"
+            "    \"max_message_chars\": \"4096\",\n"
+            "    \"compress_threshold_percent\": \"80\"\n"
             "  }\n"
             "}\n";
         write_default_json(config_path, default_config);
@@ -799,6 +804,20 @@ int main(int argc, char **argv)
                         if (lcd_height < 240) lcd_height = 240;
                     }
 
+                    /* Session section */
+                    cJSON *session = cJSON_GetObjectItemCaseSensitive(root, "session");
+                    if (session) {
+                        json_get_string(session, "context_token_budget",
+                                        config.session_context_token_budget,
+                                        sizeof(config.session_context_token_budget));
+                        json_get_string(session, "max_message_chars",
+                                        config.session_max_message_chars,
+                                        sizeof(config.session_max_message_chars));
+                        json_get_string(session, "compress_threshold_percent",
+                                        config.session_compress_threshold_percent,
+                                        sizeof(config.session_compress_threshold_percent));
+                    }
+
                     cJSON_Delete(root);
                 }
                 free(buf);
@@ -837,6 +856,12 @@ int main(int argc, char **argv)
         strncpy(config.search_brave_key, env, sizeof(config.search_brave_key) - 1);
     if ((env = getenv("TAVILY_SEARCH_KEY")))
         strncpy(config.search_tavily_key, env, sizeof(config.search_tavily_key) - 1);
+    if ((env = getenv("SESSION_CONTEXT_TOKEN_BUDGET")))
+        strncpy(config.session_context_token_budget, env, sizeof(config.session_context_token_budget) - 1);
+    if ((env = getenv("SESSION_MAX_MESSAGE_CHARS")))
+        strncpy(config.session_max_message_chars, env, sizeof(config.session_max_message_chars) - 1);
+    if ((env = getenv("SESSION_COMPRESS_THRESHOLD_PERCENT")))
+        strncpy(config.session_compress_threshold_percent, env, sizeof(config.session_compress_threshold_percent) - 1);
 
     /* Defaults */
     if (!config.llm_profile[0])
@@ -845,6 +870,15 @@ int main(int argc, char **argv)
         strncpy(config.llm_timeout_ms, "30000", sizeof(config.llm_timeout_ms) - 1);
     if (!config.llm_max_tokens[0])
         strncpy(config.llm_max_tokens, "4096", sizeof(config.llm_max_tokens) - 1);
+    if (!config.session_context_token_budget[0])
+        strncpy(config.session_context_token_budget, "96256",
+                sizeof(config.session_context_token_budget) - 1);
+    if (!config.session_max_message_chars[0])
+        strncpy(config.session_max_message_chars, "4096",
+                sizeof(config.session_max_message_chars) - 1);
+    if (!config.session_compress_threshold_percent[0])
+        strncpy(config.session_compress_threshold_percent, "80",
+                sizeof(config.session_compress_threshold_percent) - 1);
 
     ESP_LOGI(TAG, "Data directory: %s", abs_data_dir);
     ESP_LOGI(TAG, "Log file: %s", log_path);
@@ -902,10 +936,11 @@ int main(int argc, char **argv)
                 tray_icon_init();
                 STARTUP_STAGE("tray_icon_set_sdl_window");
                 tray_icon_set_sdl_window(native_hwnd);
-                /* Now show the SDL window — tray icon removed it from taskbar,
-                   so there's no taskbar icon flash. */
+        /* Now show the SDL window — tray icon removed it from taskbar,
+           so there's no taskbar icon flash. */
                 display_hal_show_window();
                 ESP_LOGI(TAG, "System tray icon initialized");
+                tray_icon_perform_update_check(CRUSH_CLAW_VERSION);
             }
         }
 #endif

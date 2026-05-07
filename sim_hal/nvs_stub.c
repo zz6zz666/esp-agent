@@ -59,10 +59,10 @@ esp_err_t nvs_flash_init(void)
 {
     ensure_nvs_dir();
 
-    FILE *fp = fopen(get_nvs_path(), "r");
+    FILE *fp = fopen(get_nvs_path(), "rb");
     if (!fp) {
         /* Create empty NVS file */
-        fp = fopen(get_nvs_path(), "w");
+        fp = fopen(get_nvs_path(), "wb");
         if (!fp) return ESP_FAIL;
         fprintf(fp, "{}");
         fclose(fp);
@@ -75,7 +75,7 @@ esp_err_t nvs_flash_init(void)
 esp_err_t nvs_flash_erase(void)
 {
     ensure_nvs_dir();
-    FILE *fp = fopen(get_nvs_path(), "w");
+    FILE *fp = fopen(get_nvs_path(), "wb");
     if (!fp) return ESP_FAIL;
     fprintf(fp, "{}");
     fclose(fp);

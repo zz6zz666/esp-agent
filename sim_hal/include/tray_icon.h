@@ -40,6 +40,18 @@ bool tray_always_hide_is_enabled(void);
 /** Toggle the "Always Hide Windows" tray setting. */
 void tray_always_hide_toggle(void);
 
+/** Check if "Check for Updates on Startup" is enabled. */
+bool tray_auto_update_is_enabled(void);
+
+/** Set the "Check for Updates on Startup" registry setting. */
+void tray_auto_update_set_enabled(bool enable);
+
+/** Perform an update check against GitHub releases API.
+ *  Compares latest tag with current_version.
+ *  If a newer version is found, shows a popup dialog.
+ *  Safe to call from main thread after tray_icon_init(). */
+void tray_icon_perform_update_check(const char *current_version);
+
 #ifdef __cplusplus
 }
 #endif

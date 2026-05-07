@@ -31,7 +31,7 @@ static void nvs_ensure_loaded(void)
     snprintf(path, sizeof(path), "%s/.crush-claw/nvs.json", get_home_dir());
     s_nvs_path = strdup(path);
 
-    FILE *fp = fopen(path, "r");
+    FILE *fp = fopen(path, "rb");
     if (fp) {
         fseek(fp, 0, SEEK_END);
         long sz = ftell(fp);

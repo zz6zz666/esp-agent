@@ -17,6 +17,7 @@
 #define OEMRESOURCE
 #include <windows.h>
 #include <shellapi.h>
+#include <winhttp.h>
 
 /* ---- Internal state ---- */
 static HWND   s_tray_hwnd = NULL;      /* hidden message window */
@@ -32,14 +33,19 @@ static HMENU  s_menu = NULL;
 #define IDM_SHOW     2001
 #define IDM_HIDE     2002
 #define IDM_EXIT     2003
-#define IDM_AUTOSTART 2004
+#define IDM_AUTOSTART   2004
 #define IDM_ALWAYS_HIDE 2005
-#define IDI_CLAW     1
+#define IDM_AUTO_UPDATE 2006
+#define IDI_CLAW        1
 
 #define REG_AUTOSTART_KEY "Software\\Microsoft\\Windows\\CurrentVersion\\Run"
 #define REG_AUTOSTART_VAL "Crush Claw"
 #define REG_APP_KEY       "Software\\crush-claw"
 #define REG_ALWAYS_HIDE   "AlwaysHide"
+#define REG_AUTO_UPDATE   "AutoUpdate"
+
+#define GITHUB_API_HOST  L"api.github.com"
+#define GITHUB_API_PATH  L"/repos/zz6zz666/crush-claw/releases/latest"
 
 /* ---- Forward decls ---- */
 static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
@@ -92,6 +98,8 @@ bool tray_icon_init(void)
     AppendMenuA(s_menu, MF_SEPARATOR, 0, NULL);
     AppendMenuA(s_menu, MF_STRING | (tray_autostart_is_enabled() ? MF_CHECKED : 0),
                 IDM_AUTOSTART, "Auto-start on Login");
+    AppendMenuA(s_menu, MF_STRING | (tray_auto_update_is_enabled() ? MF_CHECKED : 0),
+                IDM_AUTO_UPDATE, "Check for Updates on Startup");
     AppendMenuA(s_menu, MF_SEPARATOR, 0, NULL);
     AppendMenuA(s_menu, MF_STRING, IDM_EXIT, "Exit");
 
@@ -169,6 +177,139 @@ void tray_always_hide_toggle(void)
     RegSetValueExA(hKey, REG_ALWAYS_HIDE, 0, REG_DWORD,
                    (const BYTE *)&val, sizeof(val));
     RegCloseKey(hKey);
+}
+
+/* ---- Auto-update registry helpers ---- */
+
+bool tray_auto_update_is_enabled(void)
+{
+    HKEY hKey;
+    DWORD val = 0, size = sizeof(val);
+    if (RegCreateKeyExA(HKEY_CURRENT_USER, REG_APP_KEY,
+                        0, NULL, 0, KEY_READ, NULL, &hKey, NULL)
+        != ERROR_SUCCESS)
+        return true;
+    LONG rc = RegQueryValueExA(hKey, REG_AUTO_UPDATE, NULL, NULL,
+                                (LPBYTE)&val, &size);
+    RegCloseKey(hKey);
+    return rc != ERROR_SUCCESS || val != 0;
+}
+
+void tray_auto_update_set_enabled(bool enable)
+{
+    HKEY hKey;
+    if (RegCreateKeyExA(HKEY_CURRENT_USER, REG_APP_KEY,
+                        0, NULL, 0, KEY_SET_VALUE, NULL, &hKey, NULL)
+        != ERROR_SUCCESS)
+        return;
+    DWORD val = enable ? 1 : 0;
+    RegSetValueExA(hKey, REG_AUTO_UPDATE, 0, REG_DWORD,
+                   (const BYTE *)&val, sizeof(val));
+    RegCloseKey(hKey);
+}
+
+/* ---- Version comparison ---- */
+
+static int compare_versions(const char *v1, const char *v2)
+{
+    if (*v1 == 'v') v1++;
+    if (*v2 == 'v') v2++;
+    while (*v1 && *v2) {
+        int n1 = 0, n2 = 0;
+        while (*v1 && *v1 != '.') { n1 = n1 * 10 + (*v1 - '0'); v1++; }
+        while (*v2 && *v2 != '.') { n2 = n2 * 10 + (*v2 - '0'); v2++; }
+        if (n1 != n2) return n1 < n2 ? -1 : 1;
+        if (*v1) v1++;
+        if (*v2) v2++;
+    }
+    return (*v1 || *v2) ? (*v2 ? -1 : 1) : 0;
+}
+
+/* ---- GitHub release check ---- */
+
+void tray_icon_perform_update_check(const char *current_version)
+{
+    if (!tray_auto_update_is_enabled()) return;
+
+    HINTERNET hSession = NULL, hConnect = NULL, hRequest = NULL;
+    char latest_ver[64] = {0};
+
+    hSession = WinHttpOpen(L"crush-claw-updater/1.0",
+                           WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+                           NULL, NULL, 0);
+    if (!hSession) goto cleanup;
+
+    WinHttpSetTimeouts(hSession, 5000, 5000, 5000, 5000);
+
+    hConnect = WinHttpConnect(hSession, GITHUB_API_HOST,
+                              INTERNET_DEFAULT_HTTPS_PORT, 0);
+    if (!hConnect) goto cleanup;
+
+    hRequest = WinHttpOpenRequest(hConnect, L"GET", GITHUB_API_PATH,
+                                  NULL, NULL, NULL,
+                                  WINHTTP_FLAG_SECURE);
+    if (!hRequest) goto cleanup;
+
+    LPCWSTR accept = L"Accept: application/vnd.github.v3+json\r\n";
+    WinHttpAddRequestHeaders(hRequest, accept, (ULONG)wcslen(accept),
+                             WINHTTP_ADDREQ_FLAG_ADD);
+
+    if (!WinHttpSendRequest(hRequest, NULL, 0, NULL, 0, 0, 0))
+        goto cleanup;
+    if (!WinHttpReceiveResponse(hRequest, NULL))
+        goto cleanup;
+
+    {
+        char buf[4096];
+        DWORD size = 0, downloaded = 0;
+        while (WinHttpReadData(hRequest, buf + downloaded,
+                               (DWORD)(sizeof(buf) - downloaded - 1),
+                               &size) && size > 0)
+        {
+            downloaded += size;
+            if (downloaded >= sizeof(buf) - 1) break;
+        }
+        buf[downloaded] = '\0';
+
+        const char *tag = strstr(buf, "\"tag_name\"");
+        if (tag) {
+            tag = strchr(tag, ':');
+            if (tag) {
+                tag++;
+                while (*tag && (*tag == ' ' || *tag == '"')) tag++;
+                const char *end = strchr(tag, '"');
+                if (end) {
+                    size_t len = (size_t)(end - tag);
+                    if (len < sizeof(latest_ver) - 1) {
+                        memcpy(latest_ver, tag, len);
+                        latest_ver[len] = '\0';
+                    }
+                }
+            }
+        }
+    }
+
+    if (latest_ver[0] && compare_versions(latest_ver, current_version) > 0) {
+        char msg[1024];
+        snprintf(msg, sizeof(msg),
+                 "A new version of Crush Claw is available!\n\n"
+                 "Current version: %s\n"
+                 "Latest version:  %s\n\n"
+                 "Would you like to visit the releases page to download the update?",
+                 current_version, latest_ver);
+        int ret = MessageBoxA(NULL, msg, "Update Available",
+                              MB_YESNO | MB_ICONINFORMATION | MB_TOPMOST);
+        if (ret == IDYES) {
+            ShellExecuteA(NULL, "open",
+                "https://github.com/zz6zz666/crush-claw/releases/latest",
+                NULL, NULL, SW_SHOWNORMAL);
+        }
+    }
+
+cleanup:
+    if (hRequest) WinHttpCloseHandle(hRequest);
+    if (hConnect) WinHttpCloseHandle(hConnect);
+    if (hSession) WinHttpCloseHandle(hSession);
 }
 
 void tray_icon_set_sdl_window(void *hwnd)
@@ -254,6 +395,8 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                 tray_autostart_is_enabled() ? MF_CHECKED : MF_UNCHECKED);
             CheckMenuItem(s_menu, IDM_ALWAYS_HIDE,
                 tray_always_hide_is_enabled() ? MF_CHECKED : MF_UNCHECKED);
+            CheckMenuItem(s_menu, IDM_AUTO_UPDATE,
+                tray_auto_update_is_enabled() ? MF_CHECKED : MF_UNCHECKED);
             /* Right-click: show popup menu */
             POINT pt;
             GetCursorPos(&pt);
@@ -284,6 +427,11 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         case IDM_AUTOSTART: {
             bool cur = tray_autostart_is_enabled();
             tray_autostart_set_enabled(!cur);
+            break;
+        }
+        case IDM_AUTO_UPDATE: {
+            bool cur = tray_auto_update_is_enabled();
+            tray_auto_update_set_enabled(!cur);
             break;
         }
         case IDM_EXIT:

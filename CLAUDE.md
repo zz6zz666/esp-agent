@@ -143,6 +143,11 @@ Linux: `~/.crush-claw/` · Windows: `%USERPROFILE%\.crush-claw\`
   },
   "display": {
     "enabled": true           // SDL2 simulated LCD window
+  },
+  "session": {
+    "context_token_budget": "96256",  // Input context token limit (counted backward)
+    "max_message_chars": "4096",     // Per-message character cap at write time
+    "compress_threshold_percent": "80" // Auto-compress when context exceeds budget*80%
   }
 }
 ```
@@ -150,6 +155,7 @@ Linux: `~/.crush-claw/` · Windows: `%USERPROFILE%\.crush-claw\`
 Environment variable overrides: `LLM_API_KEY`, `LLM_MODEL`, `LLM_PROFILE`, `LLM_BASE_URL`,
 `LLM_AUTH_TYPE`, `QQ_APP_ID`, `QQ_APP_SECRET`, `TG_BOT_TOKEN`, `FEISHU_APP_ID`,
 `FEISHU_APP_SECRET`, `WECHAT_TOKEN`, `BRAVE_SEARCH_KEY`, `TAVILY_SEARCH_KEY`.
+`SESSION_CONTEXT_TOKEN_BUDGET`, `SESSION_MAX_MESSAGE_CHARS`, `SESSION_COMPRESS_THRESHOLD_PERCENT`.
 
 ## Architecture
 
@@ -345,6 +351,26 @@ make -j$(nproc)          # Linux
 | `CONFIG_FREERTOS_USE_TRACE_FACILITY=1` | enabled |
 | `CONFIG_APP_CLAW_LUA_MODULE_DISPLAY=1` | enabled |
 | `CONFIG_APP_CLAW_LUA_MODULE_BOARD_MANAGER=1` | enabled |
+
+## Windows File I/O: Binary Mode (`b`) Requirement
+
+On Windows, all `fopen()` calls that deal with structured data (JSON, base64, binary headers) **must** use the `b` (binary) mode flag. Without it, the C runtime performs automatic CRLF ↔ LF translation on write/read, which corrupts:
+
+- JSON objects (extra `\r` bytes inside strings)
+- Base64-encoded session headers (byte-level corruption)
+- Indexed record offsets (length mismatch from `\r` insertion)
+
+**Correct patterns:**
+```c
+fopen(path, "rb")   // read binary
+fopen(path, "wb")   // write binary
+fopen(path, "r+b")  // read+write binary (append with header update)
+fopen(path, "w+b")  // write+read binary (recreate file)
+```
+
+**Files affected:** `claw_memory_utils.c`, `claw_memory_session.c`, `claw_memory_storage.c`, `cap_files.c`, `nvs.c`, and any code that writes JSON or binary data to disk.
+
+When syncing changes from upstream `espressif/esp-claw` (which targets ESP32 with no CRLF issues), always verify that file I/O operations use `b` mode for Windows compatibility.
 
 ## Verified at runtime
 

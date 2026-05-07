@@ -34,7 +34,7 @@
 #include "cJSON.h"
 #include "platform.h"
 
-#define VERSION       "1.0.0"
+#define VERSION       "1.0.1"
 #define MAX_LINE      32768
 #define AGENT_EXE     "esp-claw-desktop" PLATFORM_EXE_SUFFIX
 #define DEFAULTS_DIR  "defaults"
@@ -273,7 +273,7 @@ static int cmd_config(int argc, char **argv)
 
     /* Read existing config */
     cJSON *root = NULL;
-    FILE *fp = fopen(config_path, "r");
+    FILE *fp = fopen(config_path, "rb");
     if (fp) {
         fseek(fp, 0, SEEK_END);
         long sz = ftell(fp);
@@ -351,7 +351,7 @@ static int cmd_config(int argc, char **argv)
         char dir[512];
         get_data_dir(dir, sizeof(dir));
         platform_mkdir(dir);
-        fp = fopen(config_path, "w");
+        fp = fopen(config_path, "wb");
         if (fp) {
             fputs(out, fp);
             fclose(fp);
