@@ -117,6 +117,7 @@ extern bool display_hal_is_lua_mode(void);
 extern bool display_hal_consume_lua_switch_notification(void);
 extern void display_hal_save_window_position(void);
 extern bool display_hal_recreate_emote(void);
+extern void emote_set_network_msg(const char *msg);
 extern void display_hal_main_loop_wait(uint32_t timeout_ms);
 
 #if defined(PLATFORM_WINDOWS)
@@ -163,8 +164,10 @@ static int mkdir_p(const char *path)
 static void json_get_string(cJSON *obj, const char *key, char *out, size_t out_size)
 {
     cJSON *item = cJSON_GetObjectItemCaseSensitive(obj, key);
-    if (cJSON_IsString(item) && item->valuestring)
+    if (cJSON_IsString(item) && item->valuestring) {
         strncpy(out, item->valuestring, out_size - 1);
+        out[out_size - 1] = '\0';
+    }
 }
 
 static void json_get_bool(cJSON *obj, const char *key, bool *out)
@@ -679,6 +682,7 @@ int main(int argc, char **argv)
     bool display_enabled = true; /* default */
     int lcd_width  = 480;
     int lcd_height = 480;
+    char emote_text[64] = "";
 
     /* Default config if missing */
     if (access(config_path, F_OK) != 0) {
@@ -710,7 +714,8 @@ int main(int argc, char **argv)
             "  \"display\": {\n"
             "    \"enabled\": true,\n"
             "    \"lcd_width\": 480,\n"
-            "    \"lcd_height\": 480\n"
+            "    \"lcd_height\": 480,\n"
+            "    \"emote_text\": \"\"\n"
             "  },\n"
             "  \"session\": {\n"
             "    \"context_token_budget\": \"96256\",\n"
@@ -803,6 +808,7 @@ int main(int argc, char **argv)
                         json_get_bool(display, "enabled", &display_enabled);
                         json_get_int(display, "lcd_width", &lcd_width);
                         json_get_int(display, "lcd_height", &lcd_height);
+                        json_get_string(display, "emote_text", emote_text, sizeof(emote_text));
                         if (lcd_width < 320)  lcd_width  = 320;
                         if (lcd_height < 240) lcd_height = 240;
                     }
@@ -1092,6 +1098,13 @@ int main(int argc, char **argv)
         }
     }
 #endif
+
+    /* ---- set custom emote text BEFORE starting the emote engine,
+     *      so emote_init_internal() -> emote_set_network_status()
+     *      picks it up on the very first render. ---- */
+    if (emote_text[0]) {
+        emote_set_network_msg(emote_text);
+    }
 
     /* ---- start emote engine (boot animation) ---- */
     STARTUP_STAGE("app_claw_ui_start");

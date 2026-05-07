@@ -23,7 +23,8 @@
     "tavily_key": ""
   },
   "display": {
-    "enabled": true
+    "enabled": true,
+    "emote_text": ""
   },
   "session": {
     "context_token_budget": "96256",
