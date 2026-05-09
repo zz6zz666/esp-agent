@@ -99,37 +99,37 @@ Linux: `~/.crush-claw/` · Windows: `%USERPROFILE%\.crush-claw\`
 ```jsonc
 {
   "llm": {
-    "api_key": "...",         // LLM API key
-    "model": "gpt-4o",        // Model name
-    "profile": "openai",      // openai | anthropic | custom_openai_compatible
-                           //
-                           // Preset providers (fixed base_url):
-                           //   deepseek           → anthropic backend
-                           //   dashscope          → openai_compatible backend
-                           //   dashscope_coding   → anthropic backend
-                           //   volcengine         → openai_compatible backend
-                           //   volcengine_coding  → anthropic backend
-                           //   minimax            → anthropic backend
-    "base_url": "",           // Custom API base URL (empty = default)
-    "auth_type": "",          // Auth type (empty = auto)
-    "timeout_ms": "120000",   // Request timeout
-    "max_tokens": "8192"      // Max output tokens
+    "api_key": "...",                       // LLM API key
+    "model": "deepseek-v4-flash",           // Model name
+    "profile": "anthropic",                 // openai | anthropic | custom_openai_compatible
+                                            //
+                                            // Preset providers (fixed base_url):
+                                            //   deepseek           → anthropic backend
+                                            //   dashscope          → openai_compatible backend
+                                            //   dashscope_coding   → anthropic backend
+                                            //   volcengine         → openai_compatible backend
+                                            //   volcengine_coding  → anthropic backend
+                                            //   minimax            → anthropic backend
+    "base_url": "https://api.deepseek.com/anthropic",  // Custom API base URL
+    "auth_type": "",                        // Auth type (empty = auto)
+    "timeout_ms": "120000",                 // Request timeout
+    "max_tokens": "8192"                    // Max output tokens
   },
   "channels": {
-    "local_im": { "enabled": true },    // Built-in web IM (always available)
-    "qq": {                             // QQ Bot (requires ESP32)
+    "local_im": { "enabled": true },        // Built-in web IM (always available)
+    "qq": {                                 // QQ Bot (requires ESP32)
       "enabled": false,
       "app_id": "", "app_secret": ""
     },
-    "telegram": {                       // Telegram Bot (requires ESP32)
+    "telegram": {                           // Telegram Bot (requires ESP32)
       "enabled": false,
       "bot_token": ""
     },
-    "feishu": {                         // Feishu/Lark (requires ESP32)
+    "feishu": {                             // Feishu/Lark (requires ESP32)
       "enabled": false,
       "app_id": "", "app_secret": ""
     },
-    "wechat": {                         // WeChat (requires ESP32)
+    "wechat": {                             // WeChat (requires ESP32)
       "enabled": false,
       "token": "",
       "base_url": "https://ilinkai.weixin.qq.com",
@@ -138,16 +138,19 @@ Linux: `~/.crush-claw/` · Windows: `%USERPROFILE%\.crush-claw\`
     }
   },
   "search": {
-    "brave_key": "",          // Brave Search API key
-    "tavily_key": ""          // Tavily Search API key
+    "brave_key": "",                        // Brave Search API key
+    "tavily_key": ""                        // Tavily Search API key
   },
   "display": {
-    "enabled": true           // SDL2 simulated LCD window
+    "enabled": true,                        // SDL2 simulated LCD window
+    "lcd_width": 480,                       // Lua display width
+    "lcd_height": 480,                      // Lua display height
+    "emote_text": ""                        // Custom emote text (shown as toast overlay)
   },
   "session": {
-    "context_token_budget": "96256",  // Input context token limit (counted backward)
-    "max_message_chars": "4096",     // Per-message character cap at write time
-    "compress_threshold_percent": "80" // Auto-compress when context exceeds budget*80%
+    "context_token_budget": "96256",        // Input context token limit (counted backward)
+    "max_message_chars": "8192",            // Per-message character cap at write time
+    "compress_threshold_percent": "80"      // Auto-compress when context exceeds budget*80%
   }
 }
 ```

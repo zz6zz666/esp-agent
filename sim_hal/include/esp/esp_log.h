@@ -11,6 +11,10 @@
 #include <time.h>
 #include <pthread.h>
 
+#ifdef PLATFORM_ANDROID
+#include <android/log.h>
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -65,15 +69,29 @@ static inline void _esp_log_write(const char *level, const char *tag, const char
     int msec = (int)(tv.tv_usec / 1000);
 
     va_start(args, fmt);
-    va_copy(copy, args);  /* copy before consuming */
+    va_copy(copy, args);
 
     pthread_mutex_lock(&g_esp_log_mutex);
 
+#ifdef PLATFORM_ANDROID
+    {
+        int android_prio;
+        switch (level[0]) {
+        case 'E': android_prio = ANDROID_LOG_ERROR; break;
+        case 'W': android_prio = ANDROID_LOG_WARN;  break;
+        case 'I': android_prio = ANDROID_LOG_INFO;  break;
+        case 'D': android_prio = ANDROID_LOG_DEBUG; break;
+        default:  android_prio = ANDROID_LOG_VERBOSE; break;
+        }
+        __android_log_vprint(android_prio, tag, fmt, args);
+    }
+#else
     /* Write to stderr (terminal or /dev/null in daemon mode) */
     fprintf(stderr, "%s[%s.%03d] [%s] [%s] ", color, time_buf, msec, level, tag);
     vfprintf(stderr, fmt, args);
     fprintf(stderr, "\033[0m\n");
     fflush(stderr);
+#endif
     va_end(args);
 
     /* Also write to log file if configured */

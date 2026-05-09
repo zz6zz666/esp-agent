@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Crush Claw</string>
+    <string name="service_name">Crush Claw Agent</string>
+    <string name="notification_channel">crushclaw_agent</string>
+    <string name="notification_channel_desc">Crush Claw agent service</string>
+    <string name="status_running">Agent running</string>
+    <string name="status_stopped">Agent stopped</string>
+    <string name="start_agent">Start Agent</string>
+    <string name="stop_agent">Stop Agent</string>
+    <string name="config_title">Agent Configuration</string>
+    <string name="overlay_permission">Floating window permission required</string>
+    <string name="notification_permission">Notification permission required</string>
+</resources>

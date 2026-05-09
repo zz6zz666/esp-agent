@@ -7,6 +7,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#ifdef PLATFORM_ANDROID
+#include <android/log.h>
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -28,6 +32,17 @@ typedef int32_t esp_err_t;
 #define ESP_ERR_NVS_NO_FREE_PAGES        0x1101
 #define ESP_ERR_NVS_NEW_VERSION_FOUND    0x1102
 
+#ifdef PLATFORM_ANDROID
+#define ESP_ERROR_CHECK(x) do {                                         \
+        esp_err_t __err_rc = (x);                                       \
+        if (__err_rc != ESP_OK) {                                       \
+            __android_log_print(ANDROID_LOG_FATAL, "ESP_ERROR_CHECK",   \
+                "failed: %s:%d (%s): %d",                               \
+                __FILE__, __LINE__, __func__, (int)__err_rc);           \
+            abort();                                                    \
+        }                                                               \
+    } while(0)
+#else
 #define ESP_ERROR_CHECK(x) do {                                         \
         esp_err_t __err_rc = (x);                                       \
         if (__err_rc != ESP_OK) {                                       \
@@ -36,6 +51,7 @@ typedef int32_t esp_err_t;
             abort();                                                    \
         }                                                               \
     } while(0)
+#endif
 
 static inline const char *esp_err_to_name(esp_err_t err)
 {

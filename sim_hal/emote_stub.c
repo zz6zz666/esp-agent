@@ -64,6 +64,8 @@ static void sim_touch_event_cb(gfx_touch_t *touch,
 #if defined(PLATFORM_WINDOWS)
 # define EMOTE_ASSETS_DIR_DEV      "sim_hal/assets/284_240"
 # define EMOTE_ASSETS_DIR_INSTALLED "assets/284_240"
+#elif defined(PLATFORM_ANDROID)
+# define EMOTE_ASSETS_DIR_DATA     "assets/284_240"
 #else
 # define EMOTE_ASSETS_DIR_DEV      "sim_hal/assets/284_240"
 # define EMOTE_ASSETS_DIR_INSTALLED "/usr/share/crush-claw/assets/284_240"
@@ -74,11 +76,21 @@ static void sim_touch_event_cb(gfx_touch_t *touch,
 static const char *emote_get_assets_dir(void)
 {
     struct stat st;
+#if defined(PLATFORM_ANDROID)
+    {
+        const char *data_dir = getenv("CRUSH_CLAW_DATA_DIR");
+        if (data_dir) {
+            static char buf[512];
+            snprintf(buf, sizeof(buf), "%s/%s", data_dir, EMOTE_ASSETS_DIR_DATA);
+            if (stat(buf, &st) == 0 && S_ISDIR(st.st_mode)) return buf;
+        }
+    }
+    return EMOTE_ASSETS_DIR_DATA;
+#elif defined(PLATFORM_WINDOWS)
     /* Try installed path first */
     if (stat(EMOTE_ASSETS_DIR_INSTALLED, &st) == 0 && S_ISDIR(st.st_mode)) {
         return EMOTE_ASSETS_DIR_INSTALLED;
     }
-#if defined(PLATFORM_WINDOWS)
     /* On Windows, try exe-relative paths */
     {
         char exe_dir[512];
@@ -90,8 +102,14 @@ static const char *emote_get_assets_dir(void)
             if (stat(buf, &st) == 0 && S_ISDIR(st.st_mode)) return strdup(buf);
         }
     }
-#endif
     return EMOTE_ASSETS_DIR_DEV;
+#else
+    /* Try installed path first */
+    if (stat(EMOTE_ASSETS_DIR_INSTALLED, &st) == 0 && S_ISDIR(st.st_mode)) {
+        return EMOTE_ASSETS_DIR_INSTALLED;
+    }
+    return EMOTE_ASSETS_DIR_DEV;
+#endif
 }
 
 static esp_lcd_panel_io_handle_t s_io_handle;
@@ -358,4 +376,9 @@ esp_err_t emote_start(void)
         emote_cleanup();
     }
     return err;
+}
+
+void emote_stop(void)
+{
+    emote_cleanup();
 }

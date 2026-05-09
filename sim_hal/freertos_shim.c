@@ -177,7 +177,9 @@ void vTaskDelete(TaskHandle_t task_handle)
     }
 
     if (!tw->detached) {
+#ifndef PLATFORM_ANDROID
         pthread_cancel(tw->thread);
+#endif
         pthread_join(tw->thread, NULL);
     }
     free(tw);

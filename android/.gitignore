@@ -1,0 +1,31 @@
+# Built files
+.gradle/
+build/
+.idea/
+*.iml
+local.properties
+
+# Native build
+.cxx/
+
+# App build output
+app/build/
+app/.cxx/
+
+# Third-party source trees (keep only installed headers + prebuilt libs)
+third_party/src/
+third_party/build/
+
+# Unnecessary: man pages, test data
+**/share/
+**/bin/
+
+# Re-include prebuilt libraries (excluded by root .gitignore *.a *.so)
+!third_party/installed/**/*.a
+!third_party/installed/**/*.so
+
+# Build scripts kept for reference
+# third_party/build_*.sh
+
+# Gradle wrapper jar is needed
+!gradle/wrapper/gradle-wrapper.jar

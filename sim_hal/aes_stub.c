@@ -1,15 +1,44 @@
 /*
- * mbedtls_crypto.c — AES + MD5 stubs for desktop simulator
+ * aes_stub.c — AES + MD5 implementations for desktop simulator
  *
- * Implements the mbedtls AES and MD5 API subsets used by cap_im_wechat.
- * Uses OpenSSL's libcrypto (already linked for WebSocket TLS).
+ * Desktop: wraps OpenSSL's libcrypto (already linked for WebSocket TLS).
+ * Android: no-op stubs (WeChat channel excluded from Android build).
  */
 #include "mbedtls/aes.h"
 #include "mbedtls/md5.h"
+
+#ifndef PLATFORM_ANDROID
 #include <openssl/aes.h>
 #include <openssl/md5.h>
+#endif
+
 #include <stdlib.h>
 #include <string.h>
+#include "esp_log.h"
+
+static const char *TAG = "crypto";
+
+#ifdef PLATFORM_ANDROID
+
+/* ---- Android: no-op stubs (WeChat not compiled) ---- */
+
+void mbedtls_aes_init(mbedtls_aes_context *ctx) { if (ctx) memset(ctx, 0, sizeof(*ctx)); }
+void mbedtls_aes_free(mbedtls_aes_context *ctx) { if (ctx) memset(ctx, 0, sizeof(*ctx)); }
+int mbedtls_aes_setkey_enc(mbedtls_aes_context *ctx, const unsigned char *key, unsigned int keybits) { (void)ctx; (void)key; (void)keybits; return -1; }
+int mbedtls_aes_setkey_dec(mbedtls_aes_context *ctx, const unsigned char *key, unsigned int keybits) { (void)ctx; (void)key; (void)keybits; return -1; }
+int mbedtls_aes_crypt_cbc(mbedtls_aes_context *ctx, int mode, size_t length, unsigned char iv[16], const unsigned char *input, unsigned char *output) { (void)ctx; (void)mode; (void)length; (void)iv; (void)input; (void)output; return -1; }
+int mbedtls_aes_crypt_ecb(mbedtls_aes_context *ctx, int mode, const unsigned char input[16], unsigned char output[16]) { (void)ctx; (void)mode; (void)input; (void)output; return -1; }
+void mbedtls_md5_init(mbedtls_md5_context *ctx) { if (ctx) memset(ctx, 0, sizeof(*ctx)); }
+void mbedtls_md5_free(mbedtls_md5_context *ctx) { if (ctx) memset(ctx, 0, sizeof(*ctx)); }
+void mbedtls_md5_clone(mbedtls_md5_context *dst, const mbedtls_md5_context *src) { if (dst && src) memcpy(dst, src, sizeof(*dst)); }
+int mbedtls_md5_starts(mbedtls_md5_context *ctx) { (void)ctx; return -1; }
+int mbedtls_md5_update(mbedtls_md5_context *ctx, const unsigned char *input, size_t ilen) { (void)ctx; (void)input; (void)ilen; return -1; }
+int mbedtls_md5_finish(mbedtls_md5_context *ctx, unsigned char output[16]) { (void)ctx; (void)output; return -1; }
+int mbedtls_md5(const unsigned char *input, size_t ilen, unsigned char output[16]) { (void)input; (void)ilen; (void)output; return -1; }
+
+#else /* Desktop: use OpenSSL */
+
+/* ---- AES (via OpenSSL) ---- */
 
 void mbedtls_aes_init(mbedtls_aes_context *ctx)
 {
@@ -74,7 +103,7 @@ int mbedtls_aes_crypt_ecb(mbedtls_aes_context *ctx,
     return 0;
 }
 
-/* ---- MD5 stubs (wrap OpenSSL) ---- */
+/* ---- MD5 (via OpenSSL) ---- */
 
 void mbedtls_md5_init(mbedtls_md5_context *ctx)
 {
@@ -116,3 +145,5 @@ int mbedtls_md5(const unsigned char *input, size_t ilen,
     if (!input || !output) return -1;
     return MD5(input, ilen, output) == NULL ? 0 : -1;
 }
+
+#endif /* PLATFORM_ANDROID */
