@@ -38,3 +38,7 @@ Makefile
 compile_commands.json
 
 skills-lock.json
+
+# Android signing
+android/keystore.properties
+android/**/*.jks

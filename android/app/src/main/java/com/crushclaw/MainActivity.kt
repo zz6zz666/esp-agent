@@ -10,6 +10,7 @@ import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.DocumentsContract
 import android.provider.Settings
 import android.util.Log
 import android.view.View
@@ -113,6 +114,13 @@ class MainActivity : AppCompatActivity() {
             setOnClickListener { openChannelEditor() }
         }
         contentLayout.addView(channelBtn)
+
+        // Browse files button
+        val filesBtn = Button(this).apply {
+            text = "Browse Files"
+            setOnClickListener { openFileBrowser() }
+        }
+        contentLayout.addView(filesBtn)
 
         // Floating window permission
         floatingPermBtn = Button(this).apply {
@@ -229,6 +237,19 @@ class MainActivity : AppCompatActivity() {
             startActivity(intent)
         } catch (e: Exception) {
             Toast.makeText(this, "Failed to open channel config: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun openFileBrowser() {
+        try {
+            val uri = Uri.parse("content://com.crushclaw.documents/root/claw_root")
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, DocumentsContract.Document.MIME_TYPE_DIR)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(intent)
+        } catch (e: Exception) {
+            Toast.makeText(this, "Open Files app and look for \"Crush Claw\" in the sidebar", Toast.LENGTH_LONG).show()
         }
     }
 }

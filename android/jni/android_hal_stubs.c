@@ -27,10 +27,22 @@ void *aligned_alloc(size_t alignment, size_t size)
 }
 
 /* ---- ESP LCD touch stubs ---- */
+static esp_lcd_touch_dev_t s_touch_dev = {0};
+static esp_lcd_touch_handle_t s_touch_handle = &s_touch_dev;
+
 esp_lcd_touch_handle_t esp_lcd_touch_init_sdl(void)
 {
-    static esp_lcd_touch_dev_t s_dev = {0};
-    return &s_dev;
+    return s_touch_handle;
+}
+
+void esp_lcd_touch_feed_sdl(int16_t x, int16_t y, bool pressed)
+{
+    s_touch_handle->last_point.x = x;
+    s_touch_handle->last_point.y = y;
+    s_touch_handle->last_point.strength = pressed ? 128 : 0;
+    s_touch_handle->last_point.track_id = 0;
+    __atomic_store_n(&s_touch_handle->has_data, pressed, __ATOMIC_RELEASE);
+    if (!pressed) s_touch_handle->last_read_ms = 0;
 }
 
 esp_err_t esp_lcd_touch_register_interrupt_callback_with_data(
@@ -46,7 +58,15 @@ esp_err_t esp_lcd_touch_read_data(esp_lcd_touch_handle_t tp)
 
 esp_err_t esp_lcd_touch_get_data(esp_lcd_touch_handle_t tp,
     esp_lcd_touch_point_data_t *out, uint8_t *count, uint16_t max)
-{ (void)tp; (void)out; (void)count; (void)max; return ESP_OK; }
+{
+    if (!tp || max == 0) { *count = 0; return ESP_OK; }
+    bool has = __atomic_load_n(&tp->has_data, __ATOMIC_ACQUIRE);
+    if (!has) { *count = 0; return ESP_OK; }
+    *count = 1;
+    out[0] = tp->last_point;
+    __atomic_store_n(&tp->has_data, false, __ATOMIC_RELEASE);
+    return ESP_OK;
+}
 
 /* ---- Display screenshot ---- */
 

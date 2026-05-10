@@ -382,3 +382,14 @@ void emote_stop(void)
 {
     emote_cleanup();
 }
+
+/* Called by the Android JNI inject-touch path to trigger an emote
+   animation change on tap, bypassing the GFX timer-based touch polling
+   which relies on FreeRTOS timers not available on Android. */
+void emote_handle_tap(void)
+{
+    if (s_emote_handle) {
+        emote_insert_anim_dialog(s_emote_handle, "offline", 3800);
+        ESP_LOGI(TAG, "emote_handle_tap: playing 'offline' dialog (3.8s)");
+    }
+}

@@ -14,7 +14,6 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.PixelFormat
-import android.graphics.Rect
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -28,7 +27,6 @@ import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
-import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -91,7 +89,6 @@ class FloatingWindowService : Service() {
     private var overlayView: View? = null
     private var imageView: ImageView? = null
     private var titleBarView: View? = null
-    private var titleLabel: TextView? = null
 
     private var renderBitmap: Bitmap? = null
     private var nativeThreadStarted = AtomicBoolean(false)
@@ -103,6 +100,7 @@ class FloatingWindowService : Service() {
     @Volatile private var alwaysHide = false
     @Volatile private var currentWidth = EMOTE_W
     @Volatile private var currentHeight = EMOTE_H
+    @Volatile private var currentScale = 1.5f
     @Volatile private var luaWidth = LUA_DEFAULT_W
     @Volatile private var luaHeight = LUA_DEFAULT_H
     @Volatile private var pendingSwitch = false
@@ -111,9 +109,6 @@ class FloatingWindowService : Service() {
     // Position tracking (persisted to SharedPreferences)
     @Volatile private var windowX = 0
     @Volatile private var windowY = 100
-
-    // Saved emote text for restoration after window switch
-    private var savedEmoteText: String? = null
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private var nativeBridge: NativeBridge = NativeBridge()
@@ -215,15 +210,11 @@ class FloatingWindowService : Service() {
     override fun onDestroy() {
         isRunning = false
         unregisterReceiver(notificationReceiver)
-
-        // Signal stop on native side (non-blocking: just sets flag, wakes loop)
-        // The join + JNI cleanup must NOT run on the main thread (ANR risk).
         val bridge = nativeBridge
         Thread({
             bridge.nativeStop()
             nativeThreadStarted.set(false)
         }, "claw-stop").start()
-
         destroyWindow()
         super.onDestroy()
     }
@@ -244,7 +235,9 @@ class FloatingWindowService : Service() {
         luaHeight = luaH
         emoteVisible = true
         isLuaMode = false
-        mainHandler.post { rebuildWindow(EMOTE_W, EMOTE_H) }
+        if (!alwaysHide) {
+            mainHandler.post { rebuildWindow(EMOTE_W, EMOTE_H) }
+        }
     }
 
     /**
@@ -256,21 +249,26 @@ class FloatingWindowService : Service() {
     fun onDisplayOwnerChanged(ownerMode: Int, width: Int, height: Int) {
         Log.i(TAG, "onDisplayOwnerChanged: owner=$ownerMode w=$width h=$height")
         if (ownerMode == 1) {
-            isLuaMode = true
+            /* Emote → Lua: always show Lua unless Always Hide is on */
             emoteWasVisible = emoteVisible
-            emoteVisible = false
+            isLuaMode = true
             if (width > 0) { luaWidth = width }
             if (height > 0) { luaHeight = height }
-            mainHandler.post { rebuildWindow(luaWidth, luaHeight) }
+            if (!alwaysHide) {
+                mainHandler.post { rebuildWindow(luaWidth, luaHeight) }
+            }
         } else if (ownerMode == 2) {
+            /* Lua → Emote: restore emote visibility state */
             isLuaMode = false
-            if (emoteWasVisible) {
+            if (emoteWasVisible && !alwaysHide) {
                 emoteVisible = true
                 mainHandler.post { rebuildWindow(EMOTE_W, EMOTE_H) }
             } else {
-                mainHandler.post { destroyWindow() }
+                emoteVisible = false
+                mainHandler.post { hideWindow() }
             }
         } else {
+            /* ownerMode == 0: full shutdown */
             isLuaMode = false
             emoteVisible = false
             mainHandler.post { destroyWindow() }
@@ -287,18 +285,36 @@ class FloatingWindowService : Service() {
             overlayView = null
             imageView = null
             titleBarView = null
-            titleLabel = null
         }
 
         currentWidth = w
         currentHeight = h
-        val viewW = (w * luaScale).toInt()
-        val viewH = (h * luaScale).toInt()
         val isLua = (w != EMOTE_W)
+        val scale = if (isLua) luaScale else emuScale
+        currentScale = scale
+        val scaledTitleBarH = (TITLE_BAR_H * scale).toInt().coerceIn(16, 80)
+        val viewW = (w * scale).toInt()
+        val viewH = (h * scale).toInt()
 
         if (renderBitmap == null || renderBitmap!!.width != w || renderBitmap!!.height != h) {
             renderBitmap = Bitmap.createBitmap(w, h, Bitmap.Config.RGB_565)
             renderBitmap!!.eraseColor(Color.BLACK)
+        }
+
+        /* Shadow wrapper — holds elevation + rounded corners.
+           Placed OUTSIDE the content container so it doesn't recalculate
+           every frame when the ImageView is invalidated. */
+        val density = resources.displayMetrics.density
+        val cornerRad = 4f * density
+        val shadowWrapper = FrameLayout(this).apply {
+            outlineProvider = object : android.view.ViewOutlineProvider() {
+                override fun getOutline(view: View, outline: android.graphics.Outline) {
+                    outline.setRoundRect(0, 0, view.width, view.height, cornerRad)
+                }
+            }
+            clipToOutline = true
+            elevation = 8f * density
+            setBackgroundColor(Color.TRANSPARENT)
         }
 
         val container = FrameLayout(this).apply {
@@ -309,32 +325,28 @@ class FloatingWindowService : Service() {
             setImageBitmap(renderBitmap)
             scaleType = ImageView.ScaleType.FIT_XY
             layoutParams = FrameLayout.LayoutParams(viewW, viewH).apply {
-                topMargin = TITLE_BAR_H
+                topMargin = scaledTitleBarH
             }
         }
         container.addView(imageView)
 
-        titleBarView = buildTitleBar(viewW) { hideWindow() }
+        titleBarView = buildTitleBar(viewW, scaledTitleBarH, scale) {
+            if (isLuaMode) {
+                /* Lua mode: hide Lua window, preserve emoteVisible */
+                hideWindow()
+            } else {
+                /* Emote mode: same as notification Hide */
+                emoteVisible = false
+                hideWindow()
+            }
+            rebuildNotification()
+        }
         container.addView(titleBarView)
 
-        if (!isLua) {
-            titleLabel = TextView(this).apply {
-                setTextColor(Color.WHITE)
-                textSize = 9f
-                setPadding(4, 2, 4, 0)
-                isSingleLine = true
-                ellipsize = android.text.TextUtils.TruncateAt.END
-                layoutParams = FrameLayout.LayoutParams(
-                    FrameLayout.LayoutParams.WRAP_CONTENT,
-                    FrameLayout.LayoutParams.WRAP_CONTENT
-                ).apply { topMargin = 2; leftMargin = 4 }
-            }
-            container.addView(titleLabel)
-            savedEmoteText?.let { titleLabel?.text = it }
-        }
+        shadowWrapper.addView(container)
 
         val params = WindowManager.LayoutParams(
-            viewW, viewH + TITLE_BAR_H,
+            viewW, viewH + scaledTitleBarH,
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             else
@@ -349,12 +361,11 @@ class FloatingWindowService : Service() {
             y = windowY
         }
 
-        container.setOnTouchListener(createTouchListener(params))
-        windowManager.addView(container, params)
-        overlayView = container
+        shadowWrapper.setOnTouchListener(createTouchListener(params))
+        windowManager.addView(shadowWrapper, params)
+        overlayView = shadowWrapper
 
-        Log.i(TAG, "rebuildWindow: ${viewW}x${viewH + TITLE_BAR_H} lua=$isLua")
-        emoteVisible = !isLua
+        Log.i(TAG, "rebuildWindow: ${viewW}x${viewH + scaledTitleBarH} lua=$isLua scale=$scale")
         notifyFrameReady()
     }
 
@@ -369,86 +380,18 @@ class FloatingWindowService : Service() {
     }
 
     /**
-     * Called from native to set custom emote text (shown in title bar).
-     */
-    fun onEmoteText(text: String) {
-        savedEmoteText = text
-        mainHandler.post {
-            titleLabel?.text = text
-        }
-    }
-
-    /**
-     * Called from native to render text using Android's native font engine
-     * (handles CJK, emoji, complex scripts that stb_truetype can't).
-     * @param text     UTF-8 encoded text (single character recommended)
-     * @param fontSize Pixel height for rendering
-     * @return RGBA32 byte array: [R,G,B,A, R,G,B,A, ...], row-major, or null on failure
-     */
-    fun nativeRenderText(text: String, fontSize: Int): ByteArray? {
-        if (text.isEmpty() || fontSize <= 0) return null
-        val size = fontSize.toFloat()
-
-        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-            this.textSize = size
-            color = Color.WHITE
-            isSubpixelText = true
-            typeface = android.graphics.Typeface.DEFAULT
-        }
-
-        // Measure text bounds
-        val bounds = android.graphics.Rect()
-        paint.getTextBounds(text, 0, text.length, bounds)
-        val tw = bounds.width()
-        val th = bounds.height()
-        if (tw <= 0 || th <= 0) return null
-
-        // Create bitmap and render white text
-        val bmp = Bitmap.createBitmap(tw, th, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(bmp)
-        // Draw at offset to account for font baseline
-        canvas.drawText(text, -bounds.left.toFloat(), -bounds.top.toFloat(), paint)
-
-        // Extract RGBA pixels
-        val pixels = IntArray(tw * th)
-        bmp.getPixels(pixels, 0, tw, 0, 0, tw, th)
-        val rgba = ByteArray(tw * th * 4)
-        for (i in pixels.indices) {
-            val c = pixels[i]
-            rgba[i * 4 + 0] = ((c shr 16) and 0xFF).toByte() // R
-            rgba[i * 4 + 1] = ((c shr 8) and 0xFF).toByte()  // G
-            rgba[i * 4 + 2] = (c and 0xFF).toByte()           // B
-            rgba[i * 4 + 3] = ((c shr 24) and 0xFF).toByte()  // A
-        }
-        bmp.recycle()
-
-        // Prepend width and height as 4-byte ints (big-endian)
-        val result = ByteArray(rgba.size + 8)
-        result[0] = ((tw shr 24) and 0xFF).toByte()
-        result[1] = ((tw shr 16) and 0xFF).toByte()
-        result[2] = ((tw shr 8) and 0xFF).toByte()
-        result[3] = (tw and 0xFF).toByte()
-        result[4] = ((th shr 24) and 0xFF).toByte()
-        result[5] = ((th shr 16) and 0xFF).toByte()
-        result[6] = ((th shr 8) and 0xFF).toByte()
-        result[7] = (th and 0xFF).toByte()
-        System.arraycopy(rgba, 0, result, 8, rgba.size)
-        return result
-    }
-
-    /**
      * Called from native to enable/disable the overlay window.
      */
     fun onDisplayEnable(enable: Boolean) {
-        if (enable && !emoteVisible) {
-            emoteVisible = true
-            if (!isLuaMode && overlayView == null) {
+        if (enable && !isLuaMode) {
+            if (!emoteVisible && !alwaysHide && overlayView == null) {
+                emoteVisible = true
                 mainHandler.post { rebuildWindow(EMOTE_W, EMOTE_H) }
             }
-        } else if (!enable && emoteVisible) {
-            emoteVisible = false
-            if (!isLuaMode && overlayView != null) {
-                mainHandler.post { destroyWindow() }
+        } else if (!enable && !isLuaMode) {
+            if (emoteVisible && overlayView != null) {
+                emoteVisible = false
+                mainHandler.post { hideWindow() }
             }
         }
     }
@@ -506,7 +449,7 @@ class FloatingWindowService : Service() {
      *   bg = #282828, separator = #555555, btn = #4a4a4a, arrow = #bbbbbb
      *   Arrow is a 3-line downward triangle (pixel-perfect Canvas draw, not a font glyph).
      */
-    private fun buildTitleBar(width: Int, onMinimize: () -> Unit): View {
+    private fun buildTitleBar(width: Int, barHeight: Int, scale: Float, onMinimize: () -> Unit): View {
         val bar = FrameLayout(this)
         bar.setBackgroundColor(Color.argb(255, 0x28, 0x28, 0x28))
 
@@ -517,34 +460,31 @@ class FloatingWindowService : Service() {
         sepLp.gravity = Gravity.BOTTOM
         bar.addView(sep, sepLp)
 
-        // Minimize button — desktop: bx = w - 22, by = 2, bw = 20, bh = 16
-        // Arrow: 3 horizontal lines forming a downward triangle, drawn via Canvas
-        val BTN_W = 20
-        val arrowPaint = android.graphics.Paint().apply {
-            color = Color.argb(255, 0xbb, 0xbb, 0xbb)
-            strokeWidth = 1f
-            isAntiAlias = false
-        }
-        val arrowView = object : View(this) {
-            override fun onDraw(canvas: Canvas) {
-                super.onDraw(canvas)
-                val cx = width / 2f
-                val cy = height / 2f + 1f
-                // Desktop: dy=-1 half=1 → dy=0 half=3 → dy=1 half=2
-                canvas.drawLine(cx - 1f, cy - 1f, cx + 1f, cy - 1f, arrowPaint)
-                canvas.drawLine(cx - 3f, cy,      cx + 3f, cy,      arrowPaint)
-                canvas.drawLine(cx - 2f, cy + 1f, cx + 2f, cy + 1f, arrowPaint)
-            }
-        }
-        arrowView.setBackgroundColor(Color.argb(255, 0x4a, 0x4a, 0x4a))
-        arrowView.setOnClickListener { onMinimize() }
-        val btnLp = FrameLayout.LayoutParams(BTN_W, TITLE_BAR_H - 4)
-        btnLp.gravity = Gravity.TOP or Gravity.END
-        btnLp.topMargin = 2
-        btnLp.rightMargin = 2
-        bar.addView(arrowView, btnLp)
+        // Minimize button: centered minus symbol
+        val scaledBtnW = barHeight  // desktop: BTN_W == TITLE_BAR_H
+        val scaledBtnH = barHeight - (4 * scale).toInt().coerceIn(8, barHeight)
+        val scaledBtnMargin = (2 * scale).toInt().coerceIn(1, 10)
 
-        bar.layoutParams = FrameLayout.LayoutParams(width, TITLE_BAR_H)
+        val btn = FrameLayout(this)
+        btn.setBackgroundColor(Color.argb(255, 0x4a, 0x4a, 0x4a))  // #4a4a4a
+        btn.setOnClickListener { onMinimize() }
+
+        // Minus line: small horizontal bar centered in the button
+        val line = View(this)
+        line.setBackgroundColor(Color.argb(255, 0xbb, 0xbb, 0xbb))  // #bbbbbb
+        val lineH = (2 * scale).toInt().coerceIn(1, 6)
+        val lineW = (scaledBtnW * 0.4f).toInt().coerceIn(4, scaledBtnW - 4)
+        val lineLp = FrameLayout.LayoutParams(lineW, lineH)
+        lineLp.gravity = Gravity.CENTER
+        btn.addView(line, lineLp)
+
+        val btnLp = FrameLayout.LayoutParams(scaledBtnW, scaledBtnH)
+        btnLp.gravity = Gravity.TOP or Gravity.END
+        btnLp.topMargin = scaledBtnMargin
+        btnLp.rightMargin = scaledBtnMargin
+        bar.addView(btn, btnLp)
+
+        bar.layoutParams = FrameLayout.LayoutParams(width, barHeight)
         return bar
     }
 
@@ -555,9 +495,6 @@ class FloatingWindowService : Service() {
         overlayView = null
         imageView = null
         titleBarView = null
-        titleLabel = null
-        emoteVisible = false
-        rebuildNotification()
         Log.i(TAG, "Window hidden")
     }
 
@@ -565,7 +502,7 @@ class FloatingWindowService : Service() {
         hideWindow()
         currentWidth = EMOTE_W
         currentHeight = EMOTE_H
-        isLuaMode = false
+        emoteVisible = false
     }
 
     // ================================================================
@@ -593,8 +530,11 @@ class FloatingWindowService : Service() {
                     dragging = false
 
                     // Forward touch to native (emote animation reaction)
-                    val logicalX = (event.x / EMOTE_W * currentWidth).toInt()
-                    val logicalY = (if (isLuaMode) event.y else (event.y - TITLE_BAR_H).coerceAtLeast(0f)).toInt()
+                    val logicalX = (event.x / currentScale).toInt()
+                    val logicalY = if (isLuaMode)
+                        (event.y / currentScale).toInt()
+                    else
+                        ((event.y - TITLE_BAR_H * currentScale) / currentScale).toInt().coerceAtLeast(0)
                     nativeBridge.nativeInjectTouch(0, logicalX, logicalY)
                     true
                 }
@@ -663,11 +603,11 @@ class FloatingWindowService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
-        val visLabel = if (emoteVisible) "Hide Window" else "Show Window"
+        val visLabel = if (overlayView != null) "Hide Window" else "Show Window"
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Crush Claw")
             .setContentText(if (alwaysHide) "Window hidden (Always)" else "Agent running")
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setSmallIcon(R.mipmap.ic_launcher)
             .setContentIntent(openIntent)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
@@ -685,30 +625,40 @@ class FloatingWindowService : Service() {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
                 ACTION_TOGGLE_VISIBLE -> {
-                    emoteVisible = !emoteVisible
-                    mainHandler.post {
-                        if (emoteVisible && !alwaysHide && !isLuaMode && overlayView == null) {
-                            rebuildWindow(EMOTE_W, EMOTE_H)
-                        } else if (!emoteVisible && overlayView != null && !isLuaMode) {
-                            destroyWindow()
+                    if (alwaysHide) return
+                    if (isLuaMode) {
+                        /* Lua mode: toggle Lua window without changing emoteVisible */
+                        if (overlayView != null) {
+                            hideWindow()
+                        } else {
+                            rebuildWindow(luaWidth, luaHeight)
                         }
-                        rebuildNotification()
+                    } else {
+                        /* Emote mode: toggle emote window */
+                        emoteVisible = !emoteVisible
+                        if (emoteVisible && overlayView == null) {
+                            rebuildWindow(EMOTE_W, EMOTE_H)
+                        } else if (!emoteVisible && overlayView != null) {
+                            hideWindow()
+                        }
                     }
+                    rebuildNotification()
                 }
                 ACTION_TOGGLE_ALWAYS_HIDE -> {
                     alwaysHide = !alwaysHide
-                    mainHandler.post {
-                        if (alwaysHide) {
-                            destroyWindow()
-                            emoteVisible = false
+                    if (alwaysHide) {
+                        destroyWindow()
+                    } else {
+                        if (isLuaMode) {
+                            rebuildWindow(luaWidth, luaHeight)
                         } else {
                             emoteVisible = true
-                            if (!isLuaMode && overlayView == null) {
+                            if (overlayView == null) {
                                 rebuildWindow(EMOTE_W, EMOTE_H)
                             }
                         }
-                        rebuildNotification()
                     }
+                    rebuildNotification()
                 }
             }
         }

@@ -1,8 +1,8 @@
 /*
  * font_android.h — Android font rendering system
  *
- * Replaces the built-in 8x16 VGA bitmap font with stb_truetype-based
- * TrueType rendering using Android system fonts + bundled fallbacks.
+ * TrueType rendering via FreeType 2 (same engine as SDL2_ttf on desktop)
+ * using Android system fonts + bundled fallbacks.
  *
  * Architecture mirrors display_sdl2.c's font system:
  *   - Multi-font stack with fallback chain (up to 6 fonts)
@@ -22,7 +22,7 @@ extern "C" {
 #endif
 
 #define FA_GLYPH_CACHE_MAX   512
-#define FA_GLYPH_CACHE_MAGIC 0xCAFE
+#define FA_GLYPH_CACHE_MAGIC 0xCAFF
 #define FA_MAX_FONT_STACK     6
 #define FA_GLYPH_COLOR_SENT   0xFFFF  /* cache key: all glyphs stored white */
 

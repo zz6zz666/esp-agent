@@ -47,9 +47,7 @@ typedef struct {
     jmethodID mid_on_display_destroy;
     jmethodID mid_on_owner_changed;
     jmethodID mid_on_frame_ready;
-    jmethodID mid_on_emote_text;
     jmethodID mid_on_display_enable;
-    jmethodID mid_native_render_text;
 
     /* Synchronization */
     pthread_mutex_t mutex;
@@ -83,16 +81,8 @@ void display_android_notify_destroy(void);
 /** Call back to Java: display owner changed */
 void display_android_notify_owner_change(int owner_mode, int w, int h);
 
-/** Call back to Java: emote text changed */
-void display_android_notify_emote_text(const char *text);
-
 /** Call back to Java: toggle display visibility */
 void display_android_notify_display_enable(bool enable);
-
-/** Call to Java: render text using Android native font engine.
- *  Returns malloc'd RGBA32 byte array + prepended [w:int][h:int] header,
- *  or NULL on failure.  Caller must free the returned buffer. */
-uint8_t *display_android_render_text(const char *text, int font_size, int *out_w, int *out_h);
 
 #ifdef __cplusplus
 }

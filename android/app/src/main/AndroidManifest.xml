@@ -54,14 +54,28 @@
             android:name=".ConfigActivity"
             android:exported="false"
             android:label="Configuration"
-            android:parentActivityName=".MainActivity" />
+            android:parentActivityName=".MainActivity"
+            android:windowSoftInputMode="adjustPan" />
 
         <!-- Channel configuration activity -->
         <activity
             android:name=".ChannelConfigActivity"
             android:exported="false"
             android:label="Channel Configuration"
-            android:parentActivityName=".MainActivity" />
+            android:parentActivityName=".MainActivity"
+            android:windowSoftInputMode="adjustPan" />
+
+        <!-- SAF DocumentsProvider: exposes .crush-claw/ in system file manager -->
+        <provider
+            android:name=".ClawDocumentsProvider"
+            android:authorities="com.crushclaw.documents"
+            android:exported="true"
+            android:grantUriPermissions="true"
+            android:permission="android.permission.MANAGE_DOCUMENTS">
+            <intent-filter>
+                <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
+            </intent-filter>
+        </provider>
 
         <!-- Boot receiver for auto-start -->
         <receiver

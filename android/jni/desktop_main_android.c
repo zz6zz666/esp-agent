@@ -29,6 +29,7 @@
 #include "claw_event_router.h"
 #include "claw_memory.h"
 #include "claw_skill.h"
+#include "display_arbiter.h"
 #include "display_hal.h"
 #include "display_hal_android.h"
 #include "emote.h"
@@ -41,6 +42,7 @@
 static const char *TAG = "desktop_android";
 
 extern volatile bool s_agent_should_stop;
+volatile bool g_soft_restart_requested = false;
 
 /* Stubs / forward declarations from sim_hal */
 extern bool display_hal_is_active(void);
@@ -326,6 +328,13 @@ int desktop_main_android(const char *data_dir)
     /* Set CRUSH_CLAW_DATA_DIR env for console_unix.c socket path */
     setenv("CRUSH_CLAW_DATA_DIR", abs_data_dir, 1);
 
+    /* Set up log file (matches main_desktop.c) */
+    {
+        char log_path[PATH_MAX];
+        snprintf(log_path, sizeof(log_path), "%s/agent.log", abs_data_dir);
+        esp_log_set_log_file(log_path);
+    }
+
     /* Seed from system defaults on first run (same as main_desktop.c) */
     seed_defaults(abs_data_dir);
 
@@ -495,6 +504,20 @@ int desktop_main_android(const char *data_dir)
 
     /* Create display (floating overlay window) */
     if (display_enabled) {
+        /* Ensure clean state for re-entry: previous run may not have
+         * completed display_hal_destroy, leaving stale pointers that
+         * would cause create() to take the worker/Lua path. */
+        extern display_android_ctx_t g_display_ctx;
+        if (g_display_ctx.pixels) {
+            free(g_display_ctx.pixels);
+            g_display_ctx.pixels = NULL;
+        }
+        if (g_display_ctx.pixels_draw) {
+            free(g_display_ctx.pixels_draw);
+            g_display_ctx.pixels_draw = NULL;
+        }
+        g_display_ctx.lua_mode = false;
+
         esp_err_t d_err = display_hal_create(NULL, NULL, 0, lcd_width, lcd_height);
         if (d_err != ESP_OK) {
             ESP_LOGW(TAG, "display_hal_create failed: %d", (int)d_err);
@@ -587,8 +610,13 @@ int desktop_main_android(const char *data_dir)
     esp_err_t err = app_claw_start(&config, &paths);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "app_claw_start failed: %d", (int)err);
-        display_hal_destroy();
-        return 1;
+        /* ESP_ERR_INVALID_STATE (259) means core init (event router etc.)
+         * was already done in a previous run.  The components are still
+         * alive — treat as non-fatal and continue. */
+        if (err != 0x103) {  /* ESP_ERR_INVALID_STATE = 0x103 */
+            display_hal_destroy();
+            return 1;
+        }
     }
     ESP_LOGI(TAG, "app_claw_start OK");
 
@@ -665,8 +693,42 @@ int desktop_main_android(const char *data_dir)
         }
     }
 
+    /* Re-acquire emote display ownership in case the arbiter was
+     * released during a previous stop (we keep the emote alive
+     * across stop/start to avoid gfx_emote_deinit hangs). */
+    display_arbiter_acquire(DISPLAY_ARBITER_OWNER_EMOTE);
+
     ESP_LOGI(TAG, "Agent running. Entering main loop.");
     while (!s_agent_should_stop) {
+        if (g_soft_restart_requested) {
+            ESP_LOGI(TAG, "Soft restart requested — stopping Lua jobs...");
+            {
+                extern esp_err_t cap_lua_stop_all_jobs(const char *exclusive_filter,
+                                                      uint32_t wait_ms,
+                                                      char *output,
+                                                      size_t output_size);
+                cap_lua_stop_all_jobs(NULL, 2000, NULL, 0);
+            }
+            display_arbiter_release(DISPLAY_ARBITER_OWNER_EMOTE);
+            display_hal_destroy();
+            {
+                extern display_android_ctx_t g_display_ctx;
+                if (g_display_ctx.pixels) {
+                    free(g_display_ctx.pixels);
+                    g_display_ctx.pixels = NULL;
+                }
+                if (g_display_ctx.pixels_draw) {
+                    free(g_display_ctx.pixels_draw);
+                    g_display_ctx.pixels_draw = NULL;
+                }
+                g_display_ctx.lua_mode = false;
+            }
+            display_hal_create(NULL, NULL, 0, lcd_width, lcd_height);
+            display_arbiter_acquire(DISPLAY_ARBITER_OWNER_EMOTE);
+            g_soft_restart_requested = false;
+            ESP_LOGI(TAG, "Soft restart complete");
+        }
+
         if (display_hal_is_active()) {
             if (display_hal_is_lua_mode()) {
                 display_hal_main_loop_wait(100);
@@ -680,7 +742,25 @@ int desktop_main_android(const char *data_dir)
     }
 
     ESP_LOGI(TAG, "Shutting down...");
-    emote_stop();
+    /* Stop all running Lua async jobs (cooperative hook cancel, 2s grace).
+     * Must come before display-related teardown because Lua scripts may
+     * hold the display arbiter and render frames. */
+    {
+        extern esp_err_t cap_lua_stop_all_jobs(const char *exclusive_filter,
+                                              uint32_t wait_ms,
+                                              char *output,
+                                              size_t output_size);
+        esp_err_t lua_err = cap_lua_stop_all_jobs(NULL, 2000, NULL, 0);
+        if (lua_err != ESP_OK) {
+            ESP_LOGW(TAG, "Failed to stop Lua jobs: %d", (int)lua_err);
+        }
+    }
+    /* Release display-arbiter so emote flush callback stops rendering
+     * into our pixel buffer before we free it.  DO NOT call emote_stop()
+     * — its gfx_emote_deinit() blocks waiting for a GFX task ack and
+     * can hang on Android's FreeRTOS shim.  The emote subsystem stays
+     * alive across stop/start cycles. */
+    display_arbiter_release(DISPLAY_ARBITER_OWNER_EMOTE);
     display_hal_destroy();
     ESP_LOGI(TAG, "Shutdown complete");
     return 0;

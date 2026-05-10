@@ -27,6 +27,7 @@
 #include "display_hal.h"
 #include "display_hal_android.h"
 #include "display_arbiter.h"
+#include "esp_lcd_touch.h"
 #include "font_android.h"
 #include "esp_err.h"
 #include "esp_log.h"
@@ -65,11 +66,32 @@ bool display_hal_recreate_emote(void) { return false; }
 void display_hal_show_window(void) { display_android_notify_display_enable(true); }
 void display_hal_hide_window(void) { display_android_notify_display_enable(false); }
 bool display_hal_title_minimize_hit(void) { return false; }
-void display_hal_set_toast_text(const char *text) {
-    display_android_notify_emote_text(text ? text : "");
+/* ---- Toast text (emote overlay, matches desktop draw_toast_overlay) ---- */
+static char s_toast_text[96];
+
+void display_hal_set_toast_text(const char *text)
+{
+    if (text && text[0]) {
+        strncpy(s_toast_text, text, sizeof(s_toast_text) - 1);
+        s_toast_text[sizeof(s_toast_text) - 1] = '\0';
+    } else {
+        s_toast_text[0] = '\0';
+    }
 }
+
+static void draw_toast_overlay(void);  /* defined near display_hal_present */
 void *display_hal_get_native_window(void) { return NULL; }
-void display_hal_inject_touch_android(int action, int x, int y) { (void)action; (void)x; (void)y; }
+extern void emote_handle_tap(void);
+
+void display_hal_inject_touch_android(int action, int x, int y)
+{
+    if (action == 0) {
+        esp_lcd_touch_feed_sdl((int16_t)x, (int16_t)y, true);
+    } else if (action == 1) {
+        esp_lcd_touch_feed_sdl(0, 0, false);
+        emote_handle_tap();
+    }
+}
 
 bool display_hal_is_always_hide(void) { return g_display_ctx.always_hide; }
 bool display_hal_is_emote_visible(void) { return g_display_ctx.emote_visible; }
@@ -111,12 +133,8 @@ esp_err_t display_android_init_jni(JavaVM *jvm, jobject service_obj)
         "onDisplayOwnerChanged", "(III)V");
     g_display_ctx.mid_on_frame_ready = (*env)->GetMethodID(env, cls,
         "onFrameReady", "([BII)V");
-    g_display_ctx.mid_on_emote_text = (*env)->GetMethodID(env, cls,
-        "onEmoteText", "(Ljava/lang/String;)V");
     g_display_ctx.mid_on_display_enable = (*env)->GetMethodID(env, cls,
         "onDisplayEnable", "(Z)V");
-    g_display_ctx.mid_native_render_text = (*env)->GetMethodID(env, cls,
-        "nativeRenderText", "(Ljava/lang/String;I)[B");
 
     (*env)->DeleteLocalRef(env, cls);
 
@@ -256,31 +274,6 @@ void display_android_notify_owner_change(int owner_mode, int w, int h)
         g_display_ctx.mid_on_owner_changed, owner_mode, w, h);
 }
 
-void display_android_notify_emote_text(const char *text)
-{
-    JNIEnv *env;
-    JavaVM *jvm = g_display_ctx.jvm;
-    if (!jvm || !g_display_ctx.service_obj || !text) return;
-
-    bool need_detach = false;
-    int get_env = (*jvm)->GetEnv(jvm, (void**)&env, JNI_VERSION_1_6);
-    if (get_env == JNI_EDETACHED) {
-        if ((*jvm)->AttachCurrentThread(jvm, &env, NULL) != JNI_OK) return;
-        need_detach = true;
-    } else if (get_env != JNI_OK) {
-        return;
-    }
-
-    jstring jstr = (*env)->NewStringUTF(env, text);
-    (*env)->CallVoidMethod(env, g_display_ctx.service_obj,
-        g_display_ctx.mid_on_emote_text, jstr);
-    (*env)->DeleteLocalRef(env, jstr);
-
-    if (need_detach) {
-        (*jvm)->DetachCurrentThread(jvm);
-    }
-}
-
 void display_android_notify_display_enable(bool enable)
 {
     JNIEnv *env;
@@ -302,64 +295,6 @@ void display_android_notify_display_enable(bool enable)
     if (need_detach) {
         (*jvm)->DetachCurrentThread(jvm);
     }
-}
-
-uint8_t *display_android_render_text(const char *text, int font_size, int *out_w, int *out_h)
-{
-    if (!text || !text[0]) return NULL;
-
-    JavaVM *jvm = g_display_ctx.jvm;
-    if (!jvm || !g_display_ctx.service_obj || !g_display_ctx.mid_native_render_text)
-        return NULL;
-
-    JNIEnv *env;
-    bool need_detach = false;
-    int get_env = (*jvm)->GetEnv(jvm, (void**)&env, JNI_VERSION_1_6);
-    if (get_env == JNI_EDETACHED) {
-        if ((*jvm)->AttachCurrentThread(jvm, &env, NULL) != JNI_OK) return NULL;
-        need_detach = true;
-    } else if (get_env != JNI_OK) {
-        return NULL;
-    }
-
-    jstring jtext = (*env)->NewStringUTF(env, text);
-    if (!jtext) { if (need_detach) (*jvm)->DetachCurrentThread(jvm); return NULL; }
-
-    jobject jresult = (*env)->CallObjectMethod(env, g_display_ctx.service_obj,
-        g_display_ctx.mid_native_render_text, jtext, (jint)font_size);
-    (*env)->DeleteLocalRef(env, jtext);
-
-    if (!jresult) { if (need_detach) (*jvm)->DetachCurrentThread(jvm); return NULL; }
-
-    jbyteArray arr = (jbyteArray)jresult;
-    jsize len = (*env)->GetArrayLength(env, arr);
-    if (len < 8) {
-        (*env)->DeleteLocalRef(env, arr);
-        if (need_detach) (*jvm)->DetachCurrentThread(jvm);
-        return NULL;
-    }
-
-    uint8_t *result = malloc((size_t)len);
-    if (!result) {
-        (*env)->DeleteLocalRef(env, arr);
-        if (need_detach) (*jvm)->DetachCurrentThread(jvm);
-        return NULL;
-    }
-
-    (*env)->GetByteArrayRegion(env, arr, 0, len, (jbyte *)result);
-    (*env)->DeleteLocalRef(env, arr);
-
-    if (need_detach) (*jvm)->DetachCurrentThread(jvm);
-
-    /* Decode header: [w:int(4)][h:int(4)][RGBA pixels...] */
-    int w = (result[0] << 24) | (result[1] << 16) | (result[2] << 8) | result[3];
-    int h = (result[4] << 24) | (result[5] << 16) | (result[6] << 8) | result[7];
-    if (out_w) *out_w = w;
-    if (out_h) *out_h = h;
-
-    /* Shift header out — caller gets RGBA data starting at result+8 */
-    memmove(result, result + 8, (size_t)(len - 8));
-    return result;  /* caller must free() */
 }
 
 /* ================================================================
@@ -610,12 +545,40 @@ esp_err_t display_hal_begin_frame(bool clear, uint16_t color565)
     return ESP_OK;
 }
 
+/* ---- Forward declarations ---- */
+static inline void set_pixel(int x, int y, uint16_t color);
+
+/* ---- Toast overlay (matches desktop draw_toast_overlay) ---- */
+
+static bool g_frame_marked = false;
+
+static void draw_toast_overlay(void)
+{
+    if (!s_toast_text[0]) return;
+    if (g_display_ctx.lua_mode) return;
+
+    int bw = g_display_ctx.width, bh = g_display_ctx.height;
+    int toast_x = 40, toast_y = 20, toast_w = 240, toast_h = 40;
+
+    for (int dy = toast_y; dy < toast_y + toast_h && dy < bh; dy++) {
+        for (int dx = toast_x; dx < toast_x + toast_w && dx < bw; dx++) {
+            set_pixel(dx, dy, 0x0000);
+        }
+    }
+
+    uint16_t tw, th;
+    if (display_hal_measure_text(s_toast_text, 16, &tw, &th) == ESP_OK) {
+        int tx = toast_x + (toast_w - (int)tw) / 2;
+        int ty = toast_y + (toast_h - (int)th) / 2 - 5;
+        display_hal_draw_text(tx, ty, s_toast_text, 16, 0xFFFF, false, 0);
+    }
+}
+
 esp_err_t display_hal_present(void)
 {
     if (!g_display_ctx.pixels) return ESP_FAIL;
 
-    /* Fallback switch to Lua mode — matches display_sdl2.c present()
-     * (lines 1524-1540).  Only fires on worker thread. */
+    /* Fallback switch to Lua mode — matches display_sdl2.c present() */
     if (!g_display_ctx.lua_mode && !pthread_equal(pthread_self(), s_main_thread)) {
         ESP_LOGI(TAG, "present fallback: switching to Lua %dx%d",
                  g_display_ctx.lua_width, g_display_ctx.lua_height);
@@ -658,11 +621,32 @@ esp_err_t display_hal_present(void)
         ESP_LOGI(TAG, "present fallback: Lua mode ready");
     }
 
-    /* Double-buffered swap: move draw buffer to display buffer */
-    if (g_display_ctx.lua_mode && g_display_ctx.pixels_draw) {
+    /* Only present when the emote thread has marked a new frame ready.
+       This eliminates the toast-flicker: mark_frame_ready no longer sends
+       a frame to Java; only present() does, and it always draws the toast
+       before the copy. */
+    if (!g_display_ctx.lua_mode) {
+        if (!__atomic_load_n(&g_frame_marked, __ATOMIC_ACQUIRE)) {
+            return ESP_OK;
+        }
+        __atomic_store_n(&g_frame_marked, false, __ATOMIC_RELEASE);
+    }
+
+    /* Draw toast overlay on the active draw buffer BEFORE the swap, then
+       swap so the copy always reads a complete frame.  This matches the
+       desktop behaviour: toast is baked into the presented frame. */
+    if (g_display_ctx.pixels_draw) {
+        /* Lua double-buffer: draw toast on pixels_draw, then swap */
+        uint16_t *saved = g_display_ctx.pixels;
+        g_display_ctx.pixels = g_display_ctx.pixels_draw;
+        draw_toast_overlay();
+        g_display_ctx.pixels = saved;
+
         uint16_t *tmp = g_display_ctx.pixels;
         g_display_ctx.pixels = g_display_ctx.pixels_draw;
         g_display_ctx.pixels_draw = tmp;
+    } else {
+        draw_toast_overlay();
     }
 
     /* Send pixel buffer to Java for display */
@@ -998,7 +982,7 @@ esp_err_t display_hal_draw_text(int x, int y, const char *text, uint8_t font_siz
         return font_android_draw_text(x, y, text, font_size,
                                        text_color565, has_bg, bg_color565,
                                        g_display_ctx.width, g_display_ctx.height,
-                                       g_display_ctx.pixels);
+                                       draw_pixels());
     }
 
     /* Fallback: built-in 8x16 VGA bitmap font */
@@ -1051,7 +1035,7 @@ esp_err_t display_hal_draw_text_aligned(int x, int y, int w, int h,
                                                text_color565, has_bg, bg_color565,
                                                align, valign,
                                                g_display_ctx.width, g_display_ctx.height,
-                                               g_display_ctx.pixels);
+                                               draw_pixels());
     }
 
     /* Fallback: built-in 8x16 VGA bitmap font */
@@ -1241,5 +1225,5 @@ esp_err_t display_hal_draw_jpeg_scaled(int x, int y,
 
 void display_hal_mark_frame_ready(void)
 {
-    display_android_notify_frame_ready();
+    __atomic_store_n(&g_frame_marked, true, __ATOMIC_RELEASE);
 }

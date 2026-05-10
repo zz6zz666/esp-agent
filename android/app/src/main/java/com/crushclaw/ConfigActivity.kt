@@ -293,7 +293,7 @@ class ConfigActivity : AppCompatActivity() {
             // Write to file
             val configFile = CrushClawApp.instance.configFile
             configFile.parentFile?.mkdirs()
-            configFile.writeText(config.toString(2))
+            configFile.writeText(config.toString(2).replace("\\/", "/"))
 
             Toast.makeText(this, "Configuration saved", Toast.LENGTH_SHORT).show()
             finish()

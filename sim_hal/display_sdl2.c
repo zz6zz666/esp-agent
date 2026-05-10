@@ -269,12 +269,19 @@ bool display_hal_is_active(void)
 void *display_hal_get_native_window(void)
 {
     if (!s_ctx.window) return NULL;
-#if defined(PLATFORM_WINDOWS)
     SDL_SysWMinfo wm_info;
     SDL_VERSION(&wm_info.version);
-    if (SDL_GetWindowWMInfo(s_ctx.window, &wm_info))
+    if (SDL_GetWindowWMInfo(s_ctx.window, &wm_info)) {
+#if defined(PLATFORM_WINDOWS)
         return (void *)wm_info.info.win.window;
+#elif defined(SDL_VIDEO_DRIVER_X11)
+        if (wm_info.subsystem == SDL_SYSWM_X11)
+            return (void *)(uintptr_t)wm_info.info.x11.window;
+#elif defined(SDL_VIDEO_DRIVER_WAYLAND)
+        if (wm_info.subsystem == SDL_SYSWM_WAYLAND)
+            return (void *)(uintptr_t)wm_info.info.wl.surface;
 #endif
+    }
     return NULL;
 }
 
@@ -2328,6 +2335,19 @@ esp_err_t display_hal_draw_text(int x, int y, const char *text, uint8_t font_siz
                 }
             }
 
+            /* Normalize glyph pixel order to RGBA32 (R,G,B,A byte order on LE).
+               TTF_RenderUTF8_Blended may return ARGB8888 or ABGR8888 depending
+               on SDL_ttf build — converting once at cache-insert time guarantees
+               consistent byte order in the hot tinted-blit loop. */
+            if (glyph->format->format != SDL_PIXELFORMAT_RGBA32) {
+                SDL_Surface *rgba = SDL_ConvertSurfaceFormat(
+                    glyph, SDL_PIXELFORMAT_RGBA32, 0);
+                if (rgba) {
+                    SDL_FreeSurface(glyph);
+                    glyph = rgba;
+                }
+            }
+
             SDL_SetSurfaceBlendMode(glyph, SDL_BLENDMODE_BLEND);
             glyph_cache_insert(cp, ptsize, font_idx, GLYPH_COLOR_SENTINEL, glyph);
         }
@@ -2370,9 +2390,9 @@ esp_err_t display_hal_draw_text(int x, int y, const char *text, uint8_t font_siz
                         int inv_a = 255 - ga;
                         uint16_t result;
                         if (is_emoji) {
-                            uint8_t nb = (uint8_t)(((int)(gv & 0xFF) * ga + (int)db * inv_a) / 255);
+                            uint8_t nr = (uint8_t)(((int)(gv & 0xFF) * ga + (int)dr * inv_a) / 255);
                             uint8_t ng = (uint8_t)(((int)((gv >> 8) & 0xFF) * ga + (int)dg * inv_a) / 255);
-                            uint8_t nr = (uint8_t)(((int)((gv >> 16) & 0xFF) * ga + (int)dr * inv_a) / 255);
+                            uint8_t nb = (uint8_t)(((int)((gv >> 16) & 0xFF) * ga + (int)db * inv_a) / 255);
                             result = rgb_to_565(nr, ng, nb);
                         } else {
                             uint8_t nr = (uint8_t)(((int)tr * ga + (int)dr * inv_a) / 255);
@@ -2406,9 +2426,9 @@ esp_err_t display_hal_draw_text(int x, int y, const char *text, uint8_t font_siz
                         int inv_a = 255 - ga;
                         uint16_t result;
                         if (is_emoji) {
-                            uint8_t nb = (uint8_t)(((int)(gv & 0xFF) * ga + (int)db * inv_a) / 255);
+                            uint8_t nr = (uint8_t)(((int)(gv & 0xFF) * ga + (int)dr * inv_a) / 255);
                             uint8_t ng = (uint8_t)(((int)((gv >> 8) & 0xFF) * ga + (int)dg * inv_a) / 255);
-                            uint8_t nr = (uint8_t)(((int)((gv >> 16) & 0xFF) * ga + (int)dr * inv_a) / 255);
+                            uint8_t nb = (uint8_t)(((int)((gv >> 16) & 0xFF) * ga + (int)db * inv_a) / 255);
                             result = rgb_to_565(nr, ng, nb);
                         } else {
                             uint8_t nr = (uint8_t)(((int)tr * ga + (int)dr * inv_a) / 255);

@@ -186,7 +186,7 @@ target_include_directories(crushclaw PRIVATE
     ${SH}/include/lwip ${SH}/include/mbedtls ${SH}/include/platform
     ${SH}/include/soc ${SH}/include/driver ${SH}/include/lib
     ${SH}
-    # stb single-header
+    # stb single-header (stb_image, stb_image_write)
     ${SH}/deps/stb
     # LVGL stub header
     ${SH}/deps/lvgl
@@ -241,6 +241,8 @@ target_include_directories(crushclaw PRIVATE
     ${EC}/components/lua_modules/lua_module_storage/src
     ${EC}/components/lua_modules/lua_module_system/src
     ${EC}/components/lua_modules/lua_module_event_publisher/src
+    # FreeType (cross-compiled)
+    ${TP}/installed/freetype/${ANDROID_ABI}/include/freetype2
     # Lua (cross-compiled)
     ${TP}/installed/lua/${ANDROID_ABI}/include
     # curl + OpenSSL (cross-compiled)
@@ -254,6 +256,8 @@ find_library(android-lib android)
 find_library(z-lib z)
 
 target_link_directories(crushclaw PRIVATE
+    ${TP}/installed/freetype/${ANDROID_ABI}/lib
+    ${TP}/installed/libpng/${ANDROID_ABI}/lib
     ${TP}/installed/lua/${ANDROID_ABI}/lib
     ${TP}/installed/curl/${ANDROID_ABI}/lib
     ${TP}/installed/openssl/${ANDROID_ABI}/lib
@@ -261,6 +265,8 @@ target_link_directories(crushclaw PRIVATE
 
 target_link_libraries(crushclaw
     ${log-lib} ${android-lib} ${z-lib}
+    freetype
+    png16
     lua
     curl
     ssl crypto

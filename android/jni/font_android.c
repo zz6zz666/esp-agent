@@ -1,13 +1,16 @@
 /*
- * font_android.c — Android TrueType font rendering via stb_truetype
+ * font_android.c — Android TrueType font rendering via FreeType
  *
- * Architecture mirrors display_sdl2.c glyph cache and font stack.
- * Uses stb_truetype (single-header) instead of SDL2_ttf.
- * Fonts discovered from /system/fonts/ + {data_dir}/fonts/.
+ * TrueType rendering with FreeType 2, the same engine used by SDL2_ttf
+ * on the desktop.  This gives us:
+ *   - Proper hinting (pixel grid alignment / FT_Set_Pixel_Sizes)
+ *   - Correct baseline positioning (bitmap_top / bitmap_left)
+ *   - Correct per-glyph advance
+ *   - Rendering identical to the desktop build
+ *
+ * FreeType and libpng static libraries are cross-compiled for Android via
+ * third_party/build_freetype_android.sh and linked in CMakeLists.txt.
  */
-
-#define STB_TRUETYPE_IMPLEMENTATION
-#include "stb_truetype.h"
 
 #include <dirent.h>
 #include <math.h>
@@ -21,45 +24,42 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include <ft2build.h>
+#include FT_FREETYPE_H
+
 #include "display_hal.h"
 #include "esp_err.h"
 #include "esp_log.h"
 #include "font_android.h"
 
-/* JNI text rendering fallback (uses Android native font engine for CJK) */
-extern uint8_t *display_android_render_text(const char *text, int font_size,
-                                              int *out_w, int *out_h);
-
 static const char *TAG = "font_android";
 
 /* ---- Font descriptor ---- */
 typedef struct {
-    stbtt_fontinfo  info;
-    uint8_t        *font_data;      /* owned, loaded from disk or assets */
+    FT_Face         face;
+    uint8_t        *font_data;
     size_t          font_size;
-    char           *path;           /* strdup'd file path */
-    const char     *label;          /* human-readable label (static string) */
-    int             loaded_ptsize;  /* ptsize this font is currently scaled for */
-    float           scale;          /* stbtt_ScaleForPixelHeight(loaded_ptsize) */
-    int             ascent;         /* cached vertical metrics */
-    int             descent;
-    int             line_gap;
+    char           *path;
+    const char     *label;
 } android_font_t;
 
 /* ---- Font stack ---- */
 static android_font_t s_font_stack[FA_MAX_FONT_STACK];
 static int             s_font_stack_count = 0;
-static int             s_font_stack_ptsize = 0;
 
-/* ---- Font paths discovered on startup ---- */
-static char    *s_font_paths[FA_MAX_FONT_STACK];
-static const char *s_font_labels[FA_MAX_FONT_STACK];
-static int      s_font_path_count = 0;
+/* ---- Font paths ---- */
+static char        *s_font_paths[FA_MAX_FONT_STACK];
+static const char  *s_font_labels[FA_MAX_FONT_STACK];
+static int          s_font_path_count = 0;
 
 /* ---- Glyph bitmap (RGBA32) ---- */
 typedef struct {
     int      w, h;
-    uint8_t *pixels;     /* RGBA32, row-major, must be freed */
+    uint8_t *pixels;
+    int      offset_left;  /* bitmap_left  at target ptsize */
+    int      offset_top;   /* bitmap_top   at target ptsize */
+    int      advance;      /* advance.x>>6 at target ptsize */
+    bool     is_color;     /* true if pixel data is native colour */
 } glyph_bitmap_t;
 
 /* ---- Glyph cache ---- */
@@ -75,51 +75,27 @@ typedef struct {
 static glyph_cache_entry_t s_glyph_cache[FA_GLYPH_CACHE_MAX];
 static int                 s_glyph_cache_count = 0;
 static int                 s_glyph_cache_tick  = 0;
-static pthread_mutex_t     s_glyph_cache_mutex;  /* recursive: held during draw calls */
+static pthread_mutex_t     s_glyph_cache_mutex;
 static pthread_mutex_t     s_glyph_disk_mutex  = PTHREAD_MUTEX_INITIALIZER;
 
 static char s_glyph_cache_dir[512];
 static bool s_glyph_cache_dir_set = false;
 
+static FT_Library s_ft_library = NULL;
+
 /* ---- Forward declarations ---- */
 static void font_stack_close(void);
-static int  font_stack_load(int ptsize);
+static int  font_stack_load(void);
 static android_font_t *font_for_codepoint(uint32_t cp);
 static int  font_stack_line_height(void);
 static uint32_t utf8_decode(const char **p);
-static int  utf8_encode(uint32_t cp, char *buf);
 static glyph_bitmap_t *glyph_cache_lookup(uint32_t cp, int ptsize, int font_idx, uint16_t color565);
-static void glyph_cache_insert(uint32_t cp, int ptsize, int font_idx, uint16_t color565, glyph_bitmap_t *bitmap);
 static void glyph_cache_add_entry(uint32_t cp, int ptsize, int font_idx, uint16_t color565, glyph_bitmap_t *bitmap);
 static void glyph_cache_save(uint32_t cp, int ptsize, int font_idx, uint16_t color565, glyph_bitmap_t *bitmap);
 static void glyph_cache_load_all(void);
 static void glyph_cache_clear(void);
 static glyph_bitmap_t *render_glyph(uint32_t cp, int ptsize, android_font_t *font);
 static void free_glyph_bitmap(glyph_bitmap_t *b);
-
-/* Render a glyph using Android's native font engine (JNI).
- * Handles CJK, complex scripts, and any characters that stb_truetype can't. */
-static glyph_bitmap_t *render_glyph_jni(uint32_t cp, int ptsize)
-{
-    char mb[5];
-    int mb_len = utf8_encode(cp, mb);
-    mb[mb_len] = '\0';
-
-    int jw = 0, jh = 0;
-    uint8_t *jni_data = display_android_render_text(mb, ptsize, &jw, &jh);
-    if (!jni_data || jw <= 0 || jh <= 0) {
-        if (jni_data) free(jni_data);
-        return NULL;
-    }
-
-    glyph_bitmap_t *b = calloc(1, sizeof(*b));
-    if (!b) { free(jni_data); return NULL; }
-
-    b->w = jw;
-    b->h = jh;
-    b->pixels = jni_data;  /* jni_data is already RGBA32, take ownership */
-    return b;
-}
 
 /* ---- RGB565 helpers ---- */
 static inline uint16_t rgb_to_565(uint8_t r, uint8_t g, uint8_t b)
@@ -134,7 +110,6 @@ static inline void rgb565_to_rgb(uint16_t c, uint8_t *r, uint8_t *g, uint8_t *b)
     *b = (uint8_t)((c << 3) & 0xF8);
 }
 
-/* ---- Font file loading ---- */
 static uint8_t *load_file(const char *path, size_t *out_size)
 {
     FILE *f = fopen(path, "rb");
@@ -172,26 +147,26 @@ static void discover_fonts_android(const char *data_dir)
 {
     s_font_path_count = 0;
 
-    /* 1. Android system fonts */
+    /* Bundled fonts (from APK assets) — checked first, take priority */
+    if (data_dir) {
+        char font_dir[512];
+        snprintf(font_dir, sizeof(font_dir), "%s/fonts", data_dir);
+        try_font_path(font_dir, "DejaVuSans.ttf",      "DejaVu Sans");
+        try_font_path(font_dir, "wqy-zenhei.ttc",      "WenQuanYi Zen Hei");
+        try_font_path(font_dir, "NotoColorEmoji.ttf",  "Noto Color Emoji");
+    }
+
+    /* System fonts (fallback) */
     try_font_path("/system/fonts", "Roboto-Regular.ttf",    "Roboto");
-    try_font_path("/system/fonts", "HYQiHei_60S.ttf",       "Han Yi Qi Hei");
-    try_font_path("/system/fonts", "HYQiHei_70S.ttf",       "Han Yi Qi Hei");
     try_font_path("/system/fonts", "NotoColorEmoji.ttf",    "Noto Color Emoji");
     try_font_path("/system/fonts", "NotoSansCJK-Regular.ttc","Noto Sans CJK");
     try_font_path("/system/fonts", "DroidSansFallback.ttf", "Droid Sans Fallback");
+    try_font_path("/system/fonts", "DroidSans.ttf",         "Droid Sans");
+    try_font_path("/system/fonts", "NotoSansSC-Regular.otf", "Noto Sans SC");
     try_font_path("/system/fonts", "NotoSansSC-Regular.ttf", "Noto Sans SC");
 
     if (s_font_path_count == 0) {
         try_font_path("/system/fonts", "DroidSans.ttf",     "Droid Sans");
-    }
-
-    /* 2. Bundled fonts (extracted to data_dir/fonts/) */
-    if (data_dir) {
-        char font_dir[512];
-        snprintf(font_dir, sizeof(font_dir), "%s/fonts", data_dir);
-        try_font_path(font_dir, "Roboto-Regular.ttf",    "Roboto");
-        try_font_path(font_dir, "NotoSansSC-Regular.ttf", "Noto Sans SC");
-        try_font_path(font_dir, "NotoColorEmoji.ttf",    "Noto Color Emoji");
     }
 
     ESP_LOGI(TAG, "Font discovery: %d fonts found", s_font_path_count);
@@ -202,6 +177,10 @@ static void discover_fonts_android(const char *data_dir)
 static void font_stack_close(void)
 {
     for (int i = 0; i < s_font_stack_count; i++) {
+        if (s_font_stack[i].face) {
+            FT_Done_Face(s_font_stack[i].face);
+            s_font_stack[i].face = NULL;
+        }
         if (s_font_stack[i].font_data) {
             free(s_font_stack[i].font_data);
             s_font_stack[i].font_data = NULL;
@@ -209,16 +188,12 @@ static void font_stack_close(void)
         memset(&s_font_stack[i], 0, sizeof(android_font_t));
     }
     s_font_stack_count = 0;
-    s_font_stack_ptsize = 0;
 }
 
-static int font_stack_load(int ptsize)
+static int font_stack_load(void)
 {
-    if (s_font_stack_count > 0 && ptsize == s_font_stack_ptsize)
+    if (s_font_stack_count > 0)
         return s_font_stack_count;
-
-    font_stack_close();
-    s_font_stack_ptsize = ptsize;
 
     for (int i = 0; i < s_font_path_count; i++) {
         size_t sz = 0;
@@ -232,26 +207,26 @@ static int font_stack_load(int ptsize)
         android_font_t *f = &s_font_stack[s_font_stack_count];
         memset(f, 0, sizeof(*f));
 
-        int offset = stbtt_GetFontOffsetForIndex(data, 0);
-        if (offset < 0) offset = 0;
-        if (!stbtt_InitFont(&f->info, data, offset)) {
+        FT_Error err = FT_New_Memory_Face(s_ft_library, data, (FT_Long)sz, 0, &f->face);
+        if (err) {
             free(data);
-            ESP_LOGW(TAG, "stbtt_InitFont failed (offset=%d) for %s "
-                     "(likely CFF/OTF format or corrupt file)", offset, s_font_paths[i]);
+            ESP_LOGW(TAG, "FT_New_Memory_Face failed (err=%d) for %s", err, s_font_paths[i]);
             continue;
         }
 
         f->font_data = data;
         f->font_size = sz;
-        f->path = s_font_paths[i];
-        f->label = s_font_labels[i];
-        f->loaded_ptsize = ptsize;
-        f->scale = stbtt_ScaleForPixelHeight(&f->info, (float)ptsize);
+        f->path      = s_font_paths[i];
+        f->label     = s_font_labels[i];
 
-        stbtt_GetFontVMetrics(&f->info, &f->ascent, &f->descent, &f->line_gap);
-
-        ESP_LOGI(TAG, "Font loaded: %s (%s) ptsize=%d scale=%.3f",
-                 f->label, f->path, ptsize, (double)f->scale);
+        ESP_LOGI(TAG, "Font loaded: %s (%s) faces=%ld fixed_sizes=%d",
+                 f->label, f->path, (long)f->face->num_faces,
+                 f->face->num_fixed_sizes);
+        for (int j = 0; j < f->face->num_fixed_sizes; j++) {
+            ESP_LOGI(TAG, "  strike[%d]: %dx%d",
+                     j, f->face->available_sizes[j].width,
+                     f->face->available_sizes[j].height);
+        }
         s_font_stack_count++;
     }
 
@@ -262,15 +237,22 @@ static android_font_t *font_for_codepoint(uint32_t cp)
 {
     if (s_font_stack_count == 0) return NULL;
 
-    /* For supplementary-plane characters (emoji U+1Fxxx+), try last font first */
-    if (cp > 0xFFFF && s_font_stack_count > 1) {
-        android_font_t *emoji = &s_font_stack[s_font_stack_count - 1];
-        if (stbtt_FindGlyphIndex(&emoji->info, (int)cp) != 0)
-            return emoji;
+    /* For supplementary-plane characters (real emoji: U+1Fxxx, etc.),
+       prefer a colour-emoji font (CBDT bitmap strikes) so they render
+       in colour instead of borrowing a monochrome glyph from an earlier
+       font. */
+    if (cp > 0xFFFF) {
+        for (int i = 0; i < s_font_stack_count; i++) {
+            if ((s_font_stack[i].face->face_flags & FT_FACE_FLAG_FIXED_SIZES) &&
+                s_font_stack[i].face->num_fixed_sizes > 0 &&
+                FT_Get_Char_Index(s_font_stack[i].face, (FT_ULong)cp) != 0) {
+                return &s_font_stack[i];
+            }
+        }
     }
 
     for (int i = 0; i < s_font_stack_count; i++) {
-        if (stbtt_FindGlyphIndex(&s_font_stack[i].info, (int)cp) != 0)
+        if (FT_Get_Char_Index(s_font_stack[i].face, (FT_ULong)cp) != 0)
             return &s_font_stack[i];
     }
 
@@ -281,11 +263,11 @@ static int font_stack_line_height(void)
 {
     if (s_font_stack_count == 0) return 16;
     android_font_t *f = &s_font_stack[0];
-    int height = (int)((f->ascent - f->descent + f->line_gap) * f->scale + 0.5f);
+    FT_Face face = f->face;
+    FT_UShort upem = face->units_per_EM;
+    int height = (int)((int64_t)face->height * face->size->metrics.y_ppem / upem);
     return height > 0 ? height : 16;
 }
-
-/* ---- UTF-8 helpers ---- */
 
 static uint32_t utf8_decode(const char **p)
 {
@@ -314,76 +296,161 @@ static uint32_t utf8_decode(const char **p)
     return cp;
 }
 
-static int utf8_encode(uint32_t cp, char *buf)
-{
-    if (cp < 0x80) {
-        buf[0] = (char)cp; return 1;
-    } else if (cp < 0x800) {
-        buf[0] = (char)(0xC0 | (cp >> 6));
-        buf[1] = (char)(0x80 | (cp & 0x3F));
-        return 2;
-    } else if (cp < 0x10000) {
-        buf[0] = (char)(0xE0 | (cp >> 12));
-        buf[1] = (char)(0x80 | ((cp >> 6) & 0x3F));
-        buf[2] = (char)(0x80 | (cp & 0x3F));
-        return 3;
-    } else {
-        buf[0] = (char)(0xF0 | (cp >> 18));
-        buf[1] = (char)(0x80 | ((cp >> 12) & 0x3F));
-        buf[2] = (char)(0x80 | ((cp >> 6) & 0x3F));
-        buf[3] = (char)(0x80 | (cp & 0x3F));
-        return 4;
-    }
-}
-
-/* ---- Glyph rendering with stb_truetype ---- */
-
 static glyph_bitmap_t *render_glyph(uint32_t cp, int ptsize, android_font_t *font)
 {
-    if (!font || font->loaded_ptsize != ptsize) return NULL;
+    if (!font || !font->face) return NULL;
 
-    float scale = font->scale;
-    int w, h, xoff, yoff;
-    unsigned char *grey = stbtt_GetCodepointBitmap(
-        &font->info, scale, scale, (int)cp, &w, &h, &xoff, &yoff);
+    FT_Face face = font->face;
+    FT_Error err;
+    FT_Int32 load_flags = FT_LOAD_COLOR | FT_LOAD_RENDER;
+    bool need_downscale = false;
+    float scale = 1.0f;
 
-    if (!grey || w == 0 || h == 0) {
-        if (grey) stbtt_FreeBitmap(grey, NULL);
+    /* Bitmap-only font (CBDT emoji) — select exact bitmap strike, then downscale. */
+    if ((face->face_flags & FT_FACE_FLAG_FIXED_SIZES) && face->num_fixed_sizes > 0) {
+        FT_Select_Size(face, 0);
+        if (face->available_sizes[0].height > (FT_UShort)ptsize) {
+            scale = (float)ptsize / (float)face->available_sizes[0].height;
+            need_downscale = true;
+        }
+        load_flags |= FT_LOAD_NO_SCALE;
+    } else {
+        err = FT_Set_Pixel_Sizes(face, 0, (FT_UInt)ptsize);
+        if (err) {
+            ESP_LOGW(TAG, "FT_Set_Pixel_Sizes(%d) failed err=%d font=%s",
+                     ptsize, err, font->label);
+            return NULL;
+        }
+    }
+
+    FT_UInt glyph_index = FT_Get_Char_Index(face, (FT_ULong)cp);
+    if (glyph_index == 0) return NULL;
+
+    err = FT_Load_Glyph(face, glyph_index, load_flags);
+    if (err) {
+        err = FT_Load_Glyph(face, glyph_index, FT_LOAD_DEFAULT | FT_LOAD_RENDER);
+    }
+    if (err) {
+        ESP_LOGW(TAG, "FT_Load_Glyph(U+%04X) failed err=%d", cp, err);
         return NULL;
     }
 
-    glyph_bitmap_t *b = calloc(1, sizeof(*b));
-    if (!b) { stbtt_FreeBitmap(grey, NULL); return NULL; }
+    FT_Bitmap *bmp = &face->glyph->bitmap;
+    if (bmp->width == 0 || bmp->rows == 0) return NULL;
 
-    b->w = w;
-    b->h = h;
-    b->pixels = malloc((size_t)w * h * 4);
-    if (!b->pixels) {
-        free(b);
-        stbtt_FreeBitmap(grey, NULL);
-        return NULL;
+    bool is_color = (bmp->pixel_mode == FT_PIXEL_MODE_BGRA);
+
+    FT_Glyph_Metrics *m = &face->glyph->metrics;
+    int raw_advance = (int)(face->glyph->advance.x >> 6);
+    int raw_left    = face->glyph->bitmap_left;
+    int raw_top     = face->glyph->bitmap_top;
+
+    int dst_w, dst_h;
+    int src_w = (int)bmp->width;
+    int src_h = (int)bmp->rows;
+
+    if (need_downscale) {
+        dst_w = (int)((float)src_w * scale + 0.5f);
+        dst_h = (int)((float)src_h * scale + 0.5f);
+        if (dst_w < 1) dst_w = 1;
+        if (dst_h < 1) dst_h = 1;
+    } else {
+        dst_w = src_w;
+        dst_h = src_h;
     }
 
-    /* Convert greyscale to white RGBA32 (alpha = glyph opacity) */
-    for (int i = 0; i < w * h; i++) {
-        b->pixels[i * 4 + 0] = 255;
-        b->pixels[i * 4 + 1] = 255;
-        b->pixels[i * 4 + 2] = 255;
-        b->pixels[i * 4 + 3] = grey[i];
+    glyph_bitmap_t *gb = calloc(1, sizeof(*gb));
+    if (!gb) return NULL;
+
+    gb->w      = dst_w;
+    gb->h      = dst_h;
+    gb->pixels = malloc((size_t)dst_w * dst_h * 4);
+    if (!gb->pixels) { free(gb); return NULL; }
+
+    if (need_downscale) {
+        float inv_scale = 1.0f / scale;
+        for (int dy = 0; dy < dst_h; dy++) {
+            float sy0 = (float)dy * inv_scale;
+            float sy1 = sy0 + inv_scale;
+            if (sy1 > src_h) sy1 = (float)src_h;
+            for (int dx = 0; dx < dst_w; dx++) {
+                float sx0 = (float)dx * inv_scale;
+                float sx1 = sx0 + inv_scale;
+                if (sx1 > src_w) sx1 = (float)src_w;
+
+                /* Box filter: accumulate all source samples in the footprint */
+                float r = 0, g = 0, b = 0, a = 0, cnt = 0;
+                for (int sy = (int)sy0; sy < (int)sy1; sy++) {
+                    uint8_t *srow = bmp->buffer + (size_t)sy * (size_t)bmp->pitch;
+                    for (int sx = (int)sx0; sx < (int)sx1; sx++) {
+                        if (is_color) {
+                            uint8_t *p = srow + (size_t)sx * 4;
+                            float sa = (float)p[3] / 255.0f;
+                            b += (float)p[0] * sa; g += (float)p[1] * sa;
+                            r += (float)p[2] * sa; a += sa;
+                        } else {
+                            a += (float)srow[sx] / 255.0f;
+                        }
+                        cnt += 1.0f;
+                    }
+                }
+                uint8_t *dst = gb->pixels + (size_t)(dy * dst_w + dx) * 4;
+                if (cnt > 0 && a > 0) {
+                    a /= cnt;
+                    if (is_color) {
+                        dst[0] = (uint8_t)(r / (a * cnt));
+                        dst[1] = (uint8_t)(g / (a * cnt));
+                        dst[2] = (uint8_t)(b / (a * cnt));
+                        dst[3] = (uint8_t)(a * 255.0f);
+                    } else {
+                        dst[0] = 255; dst[1] = 255; dst[2] = 255;
+                        dst[3] = (uint8_t)(a * 255.0f);
+                    }
+                } else {
+                    dst[0] = dst[1] = dst[2] = dst[3] = 0;
+                }
+            }
+        }
+
+        gb->offset_left = (int)((float)raw_left * scale + 0.5f);
+        gb->offset_top  = (int)((float)raw_top  * scale + 0.5f);
+        gb->advance     = (int)((float)raw_advance * scale + 0.5f);
+        gb->is_color    = is_color;
+    } else {
+        if (is_color) {
+            for (int y = 0; y < src_h; y++) {
+                for (int x = 0; x < src_w; x++) {
+                    uint8_t *src = bmp->buffer + (size_t)y * (size_t)bmp->pitch + (size_t)x * 4;
+                    uint8_t *dst = gb->pixels + (size_t)(y * src_w + x) * 4;
+                    dst[0] = src[2]; dst[1] = src[1];
+                    dst[2] = src[0]; dst[3] = src[3];
+                }
+            }
+        } else {
+            for (int y = 0; y < src_h; y++) {
+                for (int x = 0; x < src_w; x++) {
+                    uint8_t *src = bmp->buffer + y * bmp->pitch + x;
+                    uint8_t *dst = gb->pixels + (size_t)(y * src_w + x) * 4;
+                    dst[0] = 255; dst[1] = 255; dst[2] = 255; dst[3] = *src;
+                }
+            }
+        }
+
+        gb->offset_left = raw_left;
+        gb->offset_top  = raw_top;
+        gb->advance     = raw_advance;
+        gb->is_color    = is_color;
     }
 
-    stbtt_FreeBitmap(grey, NULL);
-    return b;
+    return gb;
 }
 
 static void free_glyph_bitmap(glyph_bitmap_t *b)
 {
     if (!b) return;
     if (b->pixels) free(b->pixels);
-    free(b);
+    b->pixels = NULL;
 }
-
-/* ---- Glyph cache ---- */
 
 static void glyph_cache_add_entry(uint32_t cp, int ptsize, int font_idx,
                                    uint16_t color565, glyph_bitmap_t *bitmap)
@@ -445,6 +512,10 @@ static void glyph_cache_save(uint32_t cp, int ptsize, int font_idx,
 
     uint32_t w32 = (uint32_t)bitmap->w;
     uint32_t h32 = (uint32_t)bitmap->h;
+    int32_t  ol32 = (int32_t)bitmap->offset_left;
+    int32_t  ot32 = (int32_t)bitmap->offset_top;
+    int32_t  av32 = (int32_t)bitmap->advance;
+    uint8_t  ic8  = (uint8_t)(bitmap->is_color ? 1 : 0);
     uint32_t cp32 = cp;
     uint32_t pt32 = (uint32_t)ptsize;
     uint32_t fi32 = (uint32_t)font_idx;
@@ -452,6 +523,10 @@ static void glyph_cache_save(uint32_t cp, int ptsize, int font_idx,
     fwrite(&pt32, 4, 1, f);
     fwrite(&fi32, 4, 1, f);
     fwrite(&color565, 2, 1, f);
+    fwrite(&ol32, 4, 1, f);
+    fwrite(&ot32, 4, 1, f);
+    fwrite(&av32, 4, 1, f);
+    fwrite(&ic8, 1, 1, f);
     fwrite(&w32, 4, 1, f);
     fwrite(&h32, 4, 1, f);
     fwrite(bitmap->pixels, 4, (size_t)w32 * h32, f);
@@ -479,11 +554,17 @@ static void glyph_cache_load_all(void)
 
     for (uint32_t i = 0; i < count; i++) {
         uint32_t cp32, pt32, fi32, w32, h32;
+        int32_t  ol32, ot32, av32;
+        uint8_t  ic8;
         uint16_t color565;
         if (fread(&cp32, 4, 1, f) != 1 ||
             fread(&pt32, 4, 1, f) != 1 ||
             fread(&fi32, 4, 1, f) != 1 ||
             fread(&color565, 2, 1, f) != 1 ||
+            fread(&ol32, 4, 1, f) != 1 ||
+            fread(&ot32, 4, 1, f) != 1 ||
+            fread(&av32, 4, 1, f) != 1 ||
+            fread(&ic8, 1, 1, f) != 1 ||
             fread(&w32, 4, 1, f) != 1 ||
             fread(&h32, 4, 1, f) != 1) break;
 
@@ -495,8 +576,12 @@ static void glyph_cache_load_all(void)
         }
 
         glyph_bitmap_t bm = {0};
-        bm.w = (int)w32;
-        bm.h = (int)h32;
+        bm.w           = (int)w32;
+        bm.h           = (int)h32;
+        bm.offset_left = (int)ol32;
+        bm.offset_top  = (int)ot32;
+        bm.advance     = (int)av32;
+        bm.is_color    = (ic8 != 0);
         bm.pixels = malloc((size_t)w32 * h32 * 4);
         if (!bm.pixels) {
             fseek(f, (long)w32 * h32 * 4, SEEK_CUR); continue;
@@ -525,6 +610,16 @@ static void glyph_cache_clear(void)
     pthread_mutex_unlock(&s_glyph_cache_mutex);
 }
 
+/* Thread-safe insert (takes lock).  Mirrors desktop glyph_cache_insert(). */
+static void glyph_cache_insert(uint32_t cp, int ptsize, int font_idx,
+                               uint16_t color565, glyph_bitmap_t *bitmap)
+{
+    if (!bitmap) return;
+    pthread_mutex_lock(&s_glyph_cache_mutex);
+    glyph_cache_add_entry(cp, ptsize, font_idx, color565, bitmap);
+    pthread_mutex_unlock(&s_glyph_cache_mutex);
+}
+
 static glyph_bitmap_t *glyph_cache_lookup(uint32_t cp, int ptsize,
                                            int font_idx, uint16_t color565)
 {
@@ -544,224 +639,161 @@ static glyph_bitmap_t *glyph_cache_lookup(uint32_t cp, int ptsize,
     return NULL;
 }
 
-static void glyph_cache_insert(uint32_t cp, int ptsize, int font_idx,
-                                uint16_t color565, glyph_bitmap_t *bitmap)
-{
-    if (!bitmap) return;
-    pthread_mutex_lock(&s_glyph_cache_mutex);
-    glyph_cache_add_entry(cp, ptsize, font_idx, color565, bitmap);
-    pthread_mutex_unlock(&s_glyph_cache_mutex);
-}
-
 /* ---- Public API: measure text ---- */
 
 esp_err_t font_android_measure_text(const char *text, uint8_t font_size,
-                                    uint16_t *out_w, uint16_t *out_h)
+                                     uint16_t *out_w, uint16_t *out_h)
 {
     if (!text || !out_w || !out_h) return ESP_ERR_INVALID_ARG;
 
-    /* Measure cache: avoid expensive per-glyph metric queries for static text */
-#define MEASURE_CACHE_MAX 32
-    typedef struct {
-        uint32_t hash;
-        uint8_t  font_size;
-        uint16_t w, h;
-    } measure_cache_t;
-    static measure_cache_t s_measure_cache[MEASURE_CACHE_MAX];
-    static int             s_measure_cache_count = 0;
-
-    /* djb2 hash */
-    uint32_t hash = 5381;
-    for (const char *s = text; *s; s++) hash = ((hash << 5) + hash) + (unsigned char)*s;
-
-    for (int i = 0; i < s_measure_cache_count; i++) {
-        if (s_measure_cache[i].hash == hash &&
-            s_measure_cache[i].font_size == font_size) {
-            *out_w = s_measure_cache[i].w;
-            *out_h = s_measure_cache[i].h;
-            return ESP_OK;
-        }
-    }
-
-    int ptsize = font_size;
-    if (font_stack_load(ptsize) == 0) {
+    if (font_stack_load() == 0) {
         *out_w = (uint16_t)(strlen(text) * 8 * font_size);
         *out_h = (uint16_t)(16 * font_size);
         return ESP_OK;
     }
 
-    int total_w = 0, max_h = 0;
-    int line_h = font_stack_line_height();
+    int ptsize = font_size;
+    int total_w = 0;
     const char *p = text;
 
     while (*p) {
-        const char *seg_start = p;
         uint32_t cp = utf8_decode(&p);
         android_font_t *font = font_for_codepoint(cp);
+        if (!font) continue;
 
-        /* Group consecutive chars using the same font */
-        while (*p) {
-            const char *next = p;
-            uint32_t next_cp = utf8_decode(&next);
-            if (font_for_codepoint(next_cp) != font) break;
-            p = next;
+        FT_Face face = font->face;
+
+        /* Bitmap-only font: use native-size metrics, downscale to ptsize */
+        if ((face->face_flags & FT_FACE_FLAG_FIXED_SIZES) && face->num_fixed_sizes > 0) {
+            FT_Select_Size(face, 0);
+            float scale = (float)ptsize / (float)face->available_sizes[0].height;
+            FT_UInt gi = FT_Get_Char_Index(face, (FT_ULong)cp);
+            if (gi == 0) continue;
+            if (FT_Load_Glyph(face, gi, FT_LOAD_DEFAULT | FT_LOAD_NO_SCALE) == 0) {
+                int adv = (int)((float)(face->glyph->advance.x >> 6) * scale + 0.5f);
+                if (adv > 0) total_w += adv;
+            }
+        } else {
+            FT_Set_Pixel_Sizes(face, 0, (FT_UInt)ptsize);
+            FT_UInt gi = FT_Get_Char_Index(face, (FT_ULong)cp);
+            if (gi == 0) continue;
+            if (FT_Load_Glyph(face, gi, FT_LOAD_DEFAULT) == 0) {
+                int adv = (int)(face->glyph->advance.x >> 6);
+                if (adv > 0) total_w += adv;
+            }
         }
-
-        size_t seg_len = p - seg_start;
-        char *seg_buf = malloc(seg_len + 1);
-        if (!seg_buf) continue;
-        memcpy(seg_buf, seg_start, seg_len);
-        seg_buf[seg_len] = '\0';
-
-        /* Measure each codepoint in the segment */
-        int seg_w = 0;
-        const char *sp = seg_buf;
-        while (*sp) {
-            uint32_t ccp = utf8_decode(&sp);
-            int adv, lsb;
-            stbtt_GetCodepointHMetrics(&font->info, (int)ccp, &adv, &lsb);
-            int gw = (int)(adv * font->scale + 0.5f);
-            if (gw > 0) seg_w += gw;
-        }
-
-        /* Cap oversized glyphs to line height */
-        int glyph_h = line_h;
-        if (glyph_h > line_h * 3 / 2) {
-            seg_w = (int)(seg_w * (float)line_h / (float)glyph_h);
-            glyph_h = line_h;
-        }
-
-        total_w += seg_w;
-        if (glyph_h > max_h) max_h = glyph_h;
-        free(seg_buf);
     }
+
+    /* Set size on first font so line_height reads correctly */
+    if (s_font_stack_count > 0) {
+        FT_Set_Pixel_Sizes(s_font_stack[0].face, 0, (FT_UInt)ptsize);
+    }
+    int line_h = font_stack_line_height();
 
     *out_w = (uint16_t)total_w;
-    *out_h = (uint16_t)max_h;
-
-    /* Store in measure cache */
-    if (s_measure_cache_count < MEASURE_CACHE_MAX) {
-        s_measure_cache[s_measure_cache_count].hash      = hash;
-        s_measure_cache[s_measure_cache_count].font_size  = font_size;
-        s_measure_cache[s_measure_cache_count].w          = (uint16_t)total_w;
-        s_measure_cache[s_measure_cache_count].h          = (uint16_t)max_h;
-        s_measure_cache_count++;
-    }
-
+    *out_h = (uint16_t)line_h;
     return ESP_OK;
 }
 
 /* ---- Public API: draw text ---- */
 
 esp_err_t font_android_draw_text(int x, int y, const char *text, uint8_t font_size,
-                                  uint16_t text_color, bool has_bg, uint16_t bg_color,
-                                  int disp_w, int disp_h, uint16_t *pixels)
+                                   uint16_t text_color, bool has_bg, uint16_t bg_color,
+                                   int disp_w, int disp_h, uint16_t *pixels)
 {
     if (!text || !text[0] || !pixels) return ESP_ERR_INVALID_ARG;
 
     int ptsize = font_size;
-    if (font_stack_load(ptsize) == 0) return ESP_OK;
+    if (font_stack_load() == 0) return ESP_OK;
 
-    /* Hold cache mutex for entire draw call — prevents LRU evictions
-     * from freeing glyphs while we're still rendering them. */
-    pthread_mutex_lock(&s_glyph_cache_mutex);
+    android_font_t *font0 = &s_font_stack[0];
+    FT_Set_Pixel_Sizes(font0->face, 0, (FT_UInt)ptsize);
 
-    int line_h = font_stack_line_height();
-    const char *p = text;
+    int ascent = (int)(font0->face->size->metrics.ascender >> 6);
+    int baseline = y + ascent;
     int cx = x;
 
     uint8_t tr, tg, tb;
     rgb565_to_rgb(text_color, &tr, &tg, &tb);
 
+    const char *p = text;
     while (*p) {
         uint32_t cp = utf8_decode(&p);
         android_font_t *font = font_for_codepoint(cp);
+        if (!font) continue;
 
-        /* Find font index for cache key */
+        FT_Face face = font->face;
+
         int font_idx = 0;
         for (int i = 0; i < s_font_stack_count; i++) {
             if (&s_font_stack[i] == font) { font_idx = i; break; }
         }
 
+        /* Lookup in cache (lock taken briefly by glyph_cache_lookup). */
         glyph_bitmap_t *glyph = glyph_cache_lookup(cp, ptsize, font_idx,
-                                                    FA_GLYPH_COLOR_SENT);
-        bool new_glyph = false;
-        glyph_bitmap_t rendered;
-        glyph_bitmap_t *free_me = NULL;
+                                                     FA_GLYPH_COLOR_SENT);
+        glyph_bitmap_t *rendered = NULL;
 
         if (!glyph) {
-            free_me = render_glyph(cp, ptsize, font);
-            glyph = free_me;
+            rendered = render_glyph(cp, ptsize, font);
+            glyph = rendered;
             if (!glyph) {
-                free_me = render_glyph_jni(cp, ptsize);
-                glyph = free_me;
-            }
-            if (!glyph) continue;
-
-            /* Scale down oversized glyphs to line height */
-            if (glyph->h > line_h * 3 / 2) {
-                float scale_f = (float)line_h / (float)glyph->h;
-                int new_w = (int)(glyph->w * scale_f);
-                if (new_w <= 0) new_w = 1;
-                uint8_t *scaled = malloc((size_t)new_w * line_h * 4);
-                if (scaled) {
-                    for (int sy = 0; sy < line_h; sy++) {
-                        int src_y = (int)(sy / scale_f + 0.5f);
-                        if (src_y >= glyph->h) src_y = glyph->h - 1;
-                        for (int sx = 0; sx < new_w; sx++) {
-                            int src_x = (int)(sx / scale_f + 0.5f);
-                            if (src_x >= glyph->w) src_x = glyph->w - 1;
-                            uint8_t *spix = glyph->pixels + (src_y * glyph->w + src_x) * 4;
-                            uint8_t *dpix = scaled + (sy * new_w + sx) * 4;
-                            dpix[0] = spix[0]; dpix[1] = spix[1];
-                            dpix[2] = spix[2]; dpix[3] = spix[3];
-                        }
-                    }
-                    free_glyph_bitmap(free_me);
-                    free_me = NULL;
-                    rendered.w = new_w;
-                    rendered.h = line_h;
-                    rendered.pixels = scaled;
-                    glyph = &rendered;
-                    new_glyph = true;
+                if (FT_Load_Glyph(face, FT_Get_Char_Index(face, (FT_ULong)cp),
+                                  FT_LOAD_DEFAULT) == 0) {
+                    cx += (int)(face->glyph->advance.x >> 6);
                 }
+                continue;
             }
-
-            glyph_cache_insert(cp, ptsize, font_idx, FA_GLYPH_COLOR_SENT, glyph);
-            glyph_cache_save(cp, ptsize, font_idx, FA_GLYPH_COLOR_SENT, glyph);
+            /* Insert into cache (lock taken briefly by glyph_cache_insert).
+               NOTE: no disk I/O on the hot path — desktop never saves here. */
+            glyph_cache_insert(cp, ptsize, font_idx,
+                               FA_GLYPH_COLOR_SENT, glyph);
         }
 
-        /* Copy glyph data locally so we can release cache lock */
         int gw = glyph->w, gh = glyph->h;
-        uint8_t *gp_local = malloc((size_t)gw * gh * 4);
-        if (gp_local) {
-            memcpy(gp_local, glyph->pixels, (size_t)gw * gh * 4);
-        } else {
-            if (free_me) free(free_me);
+        if (gw == 0 || gh == 0) {
+            if (rendered) free(rendered);
+            cx += glyph->advance;
             continue;
         }
 
-        /* Cleanup heap-allocated struct (pixels are cache-owned or copied above) */
-        if (free_me) free(free_me);
+        /* Copy pixels out of the cache so we can release the lock before
+           the expensive tinted-blit loop. */
+        uint8_t *gp_local = malloc((size_t)gw * gh * 4);
+        if (!gp_local) {
+            if (rendered) free(rendered);
+            cx += glyph->advance;
+            continue;
+        }
+        memcpy(gp_local, glyph->pixels, (size_t)gw * gh * 4);
 
-        /* Background fill */
+        int offset_left = glyph->offset_left;
+        int offset_top  = glyph->offset_top;
+        int advance     = glyph->advance;
+        bool is_color   = glyph->is_color;
+
+        if (rendered) free(rendered);
+
+        int draw_x = cx + offset_left;
+        int draw_y = baseline - offset_top;
+
         if (has_bg) {
-            for (int gy = 0; gy < gh; gy++) {
-                for (int gx = 0; gx < gw; gx++) {
-                    int dx = cx + gx, dy = y + gy;
-                    if (dx >= 0 && dx < disp_w && dy >= 0 && dy < disp_h)
-                        pixels[dy * disp_w + dx] = bg_color;
+            int bg_x0 = draw_x > 0 ? draw_x : 0;
+            int bg_y0 = draw_y > 0 ? draw_y : 0;
+            int bg_x1 = draw_x + gw < disp_w ? draw_x + gw : disp_w;
+            int bg_y1 = draw_y + gh < disp_h ? draw_y + gh : disp_h;
+            if (bg_x1 > bg_x0 && bg_y1 > bg_y0) {
+                for (int gy = bg_y0; gy < bg_y1; gy++) {
+                    for (int gx = bg_x0; gx < bg_x1; gx++) {
+                        pixels[gy * disp_w + gx] = bg_color;
+                    }
                 }
             }
         }
 
-        /* Tinted alpha-blit from local copy */
-        bool is_emoji = (cp > 0xFFFF && s_font_stack_count > 1 &&
-                         font_idx == s_font_stack_count - 1);
-
         for (int gy = 0; gy < gh; gy++) {
             for (int gx = 0; gx < gw; gx++) {
-                int dx = cx + gx, dy = y + gy;
+                int dx = draw_x + gx, dy = draw_y + gy;
                 if (dx < 0 || dx >= disp_w || dy < 0 || dy >= disp_h) continue;
 
                 uint8_t *src = gp_local + (gy * gw + gx) * 4;
@@ -770,7 +802,7 @@ esp_err_t font_android_draw_text(int x, int y, const char *text, uint8_t font_si
 
                 uint16_t *dp = pixels + dy * disp_w + dx;
 
-                if (ga == 255 && !is_emoji) {
+                if (ga == 255 && !is_color) {
                     *dp = text_color;
                     continue;
                 }
@@ -779,7 +811,7 @@ esp_err_t font_android_draw_text(int x, int y, const char *text, uint8_t font_si
                 rgb565_to_rgb(*dp, &dr, &dg, &db);
 
                 int inv_a = 255 - ga;
-                if (is_emoji) {
+                if (is_color) {
                     uint8_t nr = (uint8_t)(((int)src[0] * ga + (int)dr * inv_a) / 255);
                     uint8_t ng = (uint8_t)(((int)src[1] * ga + (int)dg * inv_a) / 255);
                     uint8_t nb = (uint8_t)(((int)src[2] * ga + (int)db * inv_a) / 255);
@@ -794,10 +826,9 @@ esp_err_t font_android_draw_text(int x, int y, const char *text, uint8_t font_si
         }
 
         free(gp_local);
-        cx += gw;
+        cx += advance;
     }
 
-    pthread_mutex_unlock(&s_glyph_cache_mutex);
     return ESP_OK;
 }
 
@@ -839,21 +870,27 @@ esp_err_t font_android_draw_text_aligned(int x, int y, int w, int h,
 
 esp_err_t font_android_init(const char *data_dir)
 {
-    /* Init recursive cache mutex (held across entire draw calls) */
     pthread_mutexattr_t attr;
     pthread_mutexattr_init(&attr);
     pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
     pthread_mutex_init(&s_glyph_cache_mutex, &attr);
     pthread_mutexattr_destroy(&attr);
 
-    discover_fonts_android(data_dir);
-
-    if (s_font_path_count == 0) {
-        ESP_LOGE(TAG, "No fonts discovered. Using built-in 8x16 fallback.");
+    FT_Error err = FT_Init_FreeType(&s_ft_library);
+    if (err) {
+        ESP_LOGE(TAG, "FT_Init_FreeType failed (err=%d)", err);
         return ESP_FAIL;
     }
 
-    /* Set up glyph cache directory */
+    discover_fonts_android(data_dir);
+
+    if (s_font_path_count == 0) {
+        ESP_LOGE(TAG, "No fonts discovered.");
+        FT_Done_FreeType(s_ft_library);
+        s_ft_library = NULL;
+        return ESP_FAIL;
+    }
+
     if (data_dir) {
         snprintf(s_glyph_cache_dir, sizeof(s_glyph_cache_dir),
                  "%s/glyph_cache", data_dir);
@@ -861,8 +898,7 @@ esp_err_t font_android_init(const char *data_dir)
         mkdir(s_glyph_cache_dir, 0755);
     }
 
-    /* Pre-load fonts at default size 16 to enable cache pre-warm */
-    font_stack_load(16);
+    font_stack_load();
     glyph_cache_load_all();
 
     ESP_LOGI(TAG, "Font init ok: %d fonts, %d cached glyphs",
@@ -874,6 +910,11 @@ void font_android_deinit(void)
 {
     glyph_cache_clear();
     font_stack_close();
+
+    if (s_ft_library) {
+        FT_Done_FreeType(s_ft_library);
+        s_ft_library = NULL;
+    }
 
     for (int i = 0; i < s_font_path_count; i++) {
         if (s_font_paths[i]) free(s_font_paths[i]);

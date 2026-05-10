@@ -9,6 +9,7 @@
 
 #include "esp_err.h"
 #include "esp_heap_caps.h"
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,11 +18,23 @@
 extern "C" {
 #endif
 
+#if defined(PLATFORM_ANDROID)
+/* On Android we cannot kill the host process (it would take the UI with it).
+ * Instead, set a flag that the main loop checks to trigger a soft restart:
+ * stop all Lua jobs + reinitialize display, keeping the agent alive. */
+extern volatile bool g_soft_restart_requested;
+
+static inline void esp_restart(void)
+{
+    g_soft_restart_requested = true;
+}
+#else
 static inline void esp_restart(void)
 {
     fprintf(stderr, "esp_restart() called — exiting simulator\n");
     exit(0);
 }
+#endif
 
 #if defined(PLATFORM_WINDOWS)
 # define WIN32_LEAN_AND_MEAN
