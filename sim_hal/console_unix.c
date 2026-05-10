@@ -269,23 +269,16 @@ esp_err_t esp_console_run(const char *command_line, int *cmd_ret)
 
 static void oneshot_session(HANDLE hPipe)
 {
-    /* Save original stdout fd */
-    int saved_stdout = _dup(_fileno(stdout));
+    /* Redirect stdout to a temporary file to capture command output.
+     * We use freopen() because MinGW's CRT won't follow a raw _dup2()
+     * — the FILE* internal fd is cached and _dup2 doesn't update it. */
+    char tmp_path[MAX_PATH];
+    char tmp_dir[MAX_PATH];
+    GetTempPathA(sizeof(tmp_dir), tmp_dir);
+    GetTempFileNameA(tmp_dir, "ccr", 0, tmp_path);
+
     fflush(stdout);
-
-    /* Duplicate the pipe HANDLE so the CRT can own it independently.
-     * The original hPipe stays valid and will be closed by the loop. */
-    HANDLE hStdoutPipe;
-    if (!DuplicateHandle(GetCurrentProcess(), hPipe,
-                         GetCurrentProcess(), &hStdoutPipe,
-                         0, FALSE, DUPLICATE_SAME_ACCESS)) {
-        _close(saved_stdout);
-        return;
-    }
-
-    int pipe_fd = _open_osfhandle((intptr_t)hStdoutPipe, _O_WRONLY | _O_TEXT);
-    _dup2(pipe_fd, _fileno(stdout));
-    _close(pipe_fd);
+    if (!freopen(tmp_path, "w+b", stdout)) return;
 
     /* Read command from Named Pipe */
     char buf[CONSOLE_MAX_CMDLINE];
@@ -300,9 +293,29 @@ static void oneshot_session(HANDLE hPipe)
         }
     }
 
+    /* Read back captured output and write to Named Pipe */
     fflush(stdout);
-    _dup2(saved_stdout, _fileno(stdout));
-    _close(saved_stdout);
+    long resp_len = ftell(stdout);
+    if (resp_len > 0) {
+        char *resp_buf = malloc((size_t)resp_len);
+        if (resp_buf) {
+            fseek(stdout, 0, SEEK_SET);
+            fread(resp_buf, 1, (size_t)resp_len, stdout);
+            DWORD written;
+            WriteFile(hPipe, resp_buf, (DWORD)resp_len, &written, NULL);
+            free(resp_buf);
+        }
+    } else {
+        const char *fallback = "(no output)\r\n";
+        DWORD written;
+        WriteFile(hPipe, fallback, (DWORD)strlen(fallback), &written, NULL);
+    }
+
+    /* Restore stdout to a valid sink.  Since daemon mode already
+     * redirected stdout to NUL, and foreground doesn't need stdout
+     * after the response is sent back over the pipe, NUL is fine. */
+    freopen("NUL", "w", stdout);
+    remove(tmp_path);
     FlushFileBuffers(hPipe);
 }
 

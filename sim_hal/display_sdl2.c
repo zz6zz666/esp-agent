@@ -45,7 +45,7 @@
 static const char *TAG = "display_sdl2";
 
 /* ---- Font stack (multi-font fallback for emoji / symbols / CJK) ---- */
-#define MAX_FONT_STACK 6
+#define MAX_FONT_STACK 12
 
 #define TITLE_BAR_H 20
 #define TITLE_BAR_BTN_W 20
@@ -92,21 +92,17 @@ static void discover_fonts(void)
     s_font_path_count = 0;
 
 #if defined(PLATFORM_WINDOWS)
-    /* 1. fonts/ alongside the executable */
+    /* 1. Bundled fonts — DejaVuSans for English, wqy-zenhei for CJK,
+       NotoColorEmoji last for colour emoji priority */
     char exe_dir[512] = ".";
     GetModuleFileNameA(NULL, exe_dir, sizeof(exe_dir));
     char *slash = strrchr(exe_dir, '\\');
     if (slash) { *slash = '\0'; snprintf(exe_dir + (slash - exe_dir), sizeof(exe_dir) - (size_t)(slash - exe_dir), "\\fonts"); }
 
     try_font_path(exe_dir, "DejaVuSans.ttf",     "DejaVu Sans");
-    try_font_path(exe_dir, "NotoColorEmoji.ttf",  "Noto Color Emoji");
-    try_font_path(exe_dir, "arial.ttf",            "Arial");
-    try_font_path(exe_dir, "segoeui.ttf",          "Segoe UI");
-    try_font_path(exe_dir, "seguisym.ttf",         "Segoe UI Symbol");
-    try_font_path(exe_dir, "msyh.ttc",             "Microsoft YaHei");
-    try_font_path(exe_dir, "seguiemj.ttf",         "Segoe UI Emoji");
+    try_font_path(exe_dir, "wqy-zenhei.ttc",      "WQY ZenHei");
 
-    /* 2. System fonts */
+    /* 2. System fonts — fallback for English / CJK / symbols / emoji */
     const char *windir = getenv("WINDIR");
     if (!windir) windir = "C:\\Windows";
     char sysdir[512];
@@ -116,6 +112,9 @@ static void discover_fonts(void)
     try_font_path(sysdir, "seguisym.ttf",          "Segoe UI Symbol");
     try_font_path(sysdir, "msyh.ttc",              "Microsoft YaHei");
     try_font_path(sysdir, "seguiemj.ttf",          "Segoe UI Emoji");
+
+    /* 3. Bundled Noto Color Emoji — last in stack for emoji priority */
+    try_font_path(exe_dir, "NotoColorEmoji.ttf",  "Noto Color Emoji");
 #else
     /* 1. fonts/ alongside the executable (if realpath works) */
     try_font_path("fonts", "DejaVuSans.ttf",      "DejaVu Sans");
@@ -1919,8 +1918,9 @@ static int font_stack_load(int ptsize)
 static TTF_Font *font_for_codepoint(Uint32 cp)
 {
     /* For supplementary-plane characters (real emoji: U+1Fxxx, etc.),
-       try the last font (color emoji) first so emojis render in colour
-       instead of falling back to a monochrome glyph in an earlier font. */
+       try the last font (colour-emoji font) first so emojis render
+       in colour instead of borrowing a monochrome glyph from an earlier
+       text font. */
     if (cp > 0xFFFF && s_font_stack_count > 0) {
         TTF_Font *emoji = s_font_stack[s_font_stack_count - 1];
         if (TTF_GlyphIsProvided32(emoji, cp))

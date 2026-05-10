@@ -47,6 +47,11 @@ Source: "..\build\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "C:\msys64\mingw64\bin\SDL2.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "C:\msys64\mingw64\bin\SDL2_ttf.dll"; DestDir: "{app}"; Flags: ignoreversion
 
+; Fonts — bundled NotoColorEmoji.ttf replaces Windows Segoe UI Emoji
+Source: "..\fonts\NotoColorEmoji.ttf"; DestDir: "{app}\fonts"; Flags: ignoreversion
+Source: "..\fonts\DejaVuSans.ttf"; DestDir: "{app}\fonts"; Flags: ignoreversion
+Source: "..\fonts\wqy-zenhei.ttc"; DestDir: "{app}\fonts"; Flags: ignoreversion
+
 ; Lua
 Source: "C:\msys64\mingw64\bin\lua54.dll"; DestDir: "{app}"; Flags: ignoreversion
 

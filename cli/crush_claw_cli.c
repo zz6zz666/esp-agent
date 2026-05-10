@@ -34,7 +34,7 @@
 #include "cJSON.h"
 #include "platform.h"
 
-#define VERSION       "1.0.1"
+#define VERSION       "1.1.0"
 #define MAX_LINE      32768
 #define AGENT_EXE     "esp-claw-desktop" PLATFORM_EXE_SUFFIX
 #define DEFAULTS_DIR  "defaults"
@@ -75,6 +75,38 @@ static void get_config_path(char *buf, size_t size)
     get_data_dir(buf, size);
     size_t len = strlen(buf);
     snprintf(buf + len, size - len, "%cconfig.json", PLATFORM_PATH_SEP);
+}
+
+/* Interactive prompt helpers for cmd_config */
+static void read_line(char *line, size_t size)
+{
+    fgets(line, (int)size, stdin);
+    line[strcspn(line, "\r\n")] = '\0';
+}
+
+static void prompt_str(const char *prompt, const char *default_val,
+                       char *out, size_t out_size)
+{
+    if (default_val && default_val[0])
+        printf("%s [%s]: ", prompt, default_val);
+    else
+        printf("%s: ", prompt);
+    fflush(stdout);
+    read_line(out, out_size);
+    if (out[0] == '\0' && default_val) {
+        strncpy(out, default_val, out_size - 1);
+        out[out_size - 1] = '\0';
+    }
+}
+
+static bool prompt_yes_no(const char *prompt, bool default_yes)
+{
+    printf("%s [%s]: ", prompt, default_yes ? "Y/n" : "y/N");
+    fflush(stdout);
+    char line[32];
+    read_line(line, sizeof(line));
+    if (line[0] == '\0') return default_yes;
+    return line[0] == 'y' || line[0] == 'Y';
 }
 
 /* ---- PID helpers ---- */
@@ -164,9 +196,20 @@ static void disconnect_from_agent(HANDLE hPipe)
 
 static bool send_command(HANDLE conn, const char *cmd, char *resp, size_t resp_size)
 {
+    /* Build cmd + newline into one buffer, write as single message.
+     * The server reads exactly one message; splitting across two
+     * WriteFile calls leaves a stale newline message in the pipe. */
+    size_t cmd_len = strlen(cmd);
+    char *full_cmd = malloc(cmd_len + 2);
+    if (!full_cmd) return false;
+    memcpy(full_cmd, cmd, cmd_len);
+    full_cmd[cmd_len] = '\n';
+    full_cmd[cmd_len + 1] = '\0';
+
     DWORD written;
-    if (!WriteFile(conn, cmd, (DWORD)strlen(cmd), &written, NULL)) return false;
-    if (!WriteFile(conn, "\n", 1, &written, NULL)) return false;
+    BOOL ok = WriteFile(conn, full_cmd, (DWORD)(cmd_len + 1), &written, NULL);
+    free(full_cmd);
+    if (!ok) return false;
 
     /* Read response */
     char buf[8192];
@@ -266,92 +309,242 @@ static int forward_to_agent(const char *cmd)
 static int cmd_config(int argc, char **argv)
 {
     (void)argc; (void)argv;
-    printf("=== Crush Claw Configuration Wizard ===\n\n");
-
     char config_path[512];
     get_config_path(config_path, sizeof(config_path));
 
-    /* Read existing config */
-    cJSON *root = NULL;
-    FILE *fp = fopen(config_path, "rb");
-    if (fp) {
-        fseek(fp, 0, SEEK_END);
-        long sz = ftell(fp);
-        rewind(fp);
-        char *buf = calloc(1, (size_t)sz + 1);
-        if (buf && fread(buf, 1, (size_t)sz, fp) == (size_t)sz) {
-            root = cJSON_Parse(buf);
-        }
-        free(buf);
-        fclose(fp);
-    }
-    if (!root) root = cJSON_CreateObject();
+    printf("========================================\n");
+    printf("  Crush Claw Configuration Wizard\n");
+    printf("========================================\n");
+    printf("\nThis wizard will create %s\n", config_path);
+    printf("Press Enter to accept default values (shown in brackets).\n\n");
 
-    /* Ensure sections */
-    cJSON *llm = cJSON_GetObjectItemCaseSensitive(root, "llm");
-    if (!llm) { llm = cJSON_AddObjectToObject(root, "llm"); }
-    cJSON *channels = cJSON_GetObjectItemCaseSensitive(root, "channels");
-    if (!channels) { channels = cJSON_AddObjectToObject(root, "channels"); }
-    cJSON *search = cJSON_GetObjectItemCaseSensitive(root, "search");
-    if (!search) { search = cJSON_AddObjectToObject(root, "search"); }
-    cJSON *display = cJSON_GetObjectItemCaseSensitive(root, "display");
-    if (!display) { display = cJSON_AddObjectToObject(root, "display"); }
+    /* ================================================================
+     * Section 1 — LLM Model Provider
+     * ================================================================ */
+    printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+    printf("  1. LLM Model Provider\n");
+    printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n");
+    printf("  Select a provider by number:\n\n");
+    printf("  ── Preset providers (fixed URLs) ──\n");
+    printf("  1. DeepSeek          (Anthropic)   deepseek-v4-flash\n");
+    printf("  2. 阿里云百炼        (OpenAI)      qwen3.6-flash\n");
+    printf("  3. 阿里云百炼 Coding  (Anthropic)   qwen3.6-plus\n");
+    printf("  4. 火山引擎           (OpenAI)      doubao-seed-2-0-lite-260215\n");
+    printf("  5. 火山引擎 Coding    (Anthropic)   doubao-seed-2.0-pro\n");
+    printf("  6. MiniMax            (Anthropic)   MiniMax-M2.7\n\n");
+    printf("  ── Custom providers ──\n");
+    printf("  7. OpenAI             (OpenAI)      gpt-4o\n");
+    printf("  8. OpenAI Compatible  (OpenAI)      custom URL\n");
+    printf("  9. Anthropic          (Anthropic)   claude-sonnet-4-20250514\n");
+    printf(" 10. Anthropic Compat.  (Anthropic)   custom URL\n\n");
 
     char line[512];
+    printf("Provider number [7]: "); fflush(stdout);
+    read_line(line, sizeof(line));
+    int provider = line[0] ? atoi(line) : 7;
+    if (provider < 1 || provider > 10) provider = 7;
 
-    /* LLM */
-    printf("LLM Configuration\n");
-    printf("----------------\n");
+    char profile[64]      = "";
+    char base_url[512]    = "";
+    char default_model[128] = "";
+    bool ask_url = false;
 
-    printf("API Key: "); fflush(stdout);
-    fgets(line, sizeof(line), stdin);
-    line[strcspn(line, "\r\n")] = '\0';
-    if (line[0]) cJSON_AddStringToObject(llm, "api_key", line);
+    switch (provider) {
+        case 1: strcpy(profile, "anthropic");
+                strcpy(base_url, "https://api.deepseek.com/anthropic");
+                strcpy(default_model, "deepseek-v4-flash"); break;
+        case 2: strcpy(profile, "custom_openai_compatible");
+                strcpy(base_url, "https://dashscope.aliyuncs.com/compatible-mode/v1");
+                strcpy(default_model, "qwen3.6-flash"); break;
+        case 3: strcpy(profile, "anthropic");
+                strcpy(base_url, "https://coding.dashscope.aliyuncs.com/apps/anthropic");
+                strcpy(default_model, "qwen3.6-plus"); break;
+        case 4: strcpy(profile, "custom_openai_compatible");
+                strcpy(base_url, "https://ark.cn-beijing.volces.com/api/v3");
+                strcpy(default_model, "doubao-seed-2-0-lite-260215"); break;
+        case 5: strcpy(profile, "anthropic");
+                strcpy(base_url, "https://ark.cn-beijing.volces.com/api/coding");
+                strcpy(default_model, "doubao-seed-2.0-pro"); break;
+        case 6: strcpy(profile, "anthropic");
+                strcpy(base_url, "https://api.minimaxi.com/anthropic");
+                strcpy(default_model, "MiniMax-M2.7"); break;
+        case 7: strcpy(profile, "openai");
+                strcpy(default_model, "gpt-4o"); break;
+        case 8: strcpy(profile, "custom_openai_compatible");
+                strcpy(default_model, "gpt-4o"); ask_url = true; break;
+        case 9: strcpy(profile, "anthropic");
+                strcpy(default_model, "claude-sonnet-4-20250514"); break;
+        case 10: strcpy(profile, "anthropic");
+                 strcpy(default_model, "claude-sonnet-4-20250514"); ask_url = true; break;
+    }
 
-    printf("Model (e.g. gpt-4o): "); fflush(stdout);
-    fgets(line, sizeof(line), stdin);
-    line[strcspn(line, "\r\n")] = '\0';
-    if (line[0]) cJSON_AddStringToObject(llm, "model", line);
+    printf("\n");
 
-    printf("Profile [openai/anthropic/deepseek/dashscope/volcengine/minimax/custom]: "); fflush(stdout);
-    fgets(line, sizeof(line), stdin);
-    line[strcspn(line, "\r\n")] = '\0';
-    if (line[0]) cJSON_AddStringToObject(llm, "profile", line);
+    /* API key — show existing env var if set */
+    const char *env_key = getenv("LLM_API_KEY");
+    prompt_str("LLM API key", env_key, line, sizeof(line));
+    char api_key[512]; strcpy(api_key, line);
 
-    printf("Base URL (empty for default): "); fflush(stdout);
-    fgets(line, sizeof(line), stdin);
-    line[strcspn(line, "\r\n")] = '\0';
-    if (line[0]) cJSON_AddStringToObject(llm, "base_url", line);
+    prompt_str("LLM model", default_model, line, sizeof(line));
+    char model[256]; strcpy(model, line);
 
-    /* Display */
-    printf("\nDisplay (SDL2 window)\n");
-    printf("---------------------\n");
-    printf("Enable display? [Y/n]: "); fflush(stdout);
-    fgets(line, sizeof(line), stdin);
-    line[strcspn(line, "\r\n")] = '\0';
-    bool en = (line[0] == '\0' || line[0] == 'y' || line[0] == 'Y');
-    cJSON_AddBoolToObject(display, "enabled", en ? cJSON_True : cJSON_False);
+    /* Custom base URL for compatible types */
+    if (ask_url) {
+        printf("LLM base URL (required): "); fflush(stdout);
+        read_line(line, sizeof(line));
+        strcpy(base_url, line);
+    } else if (base_url[0]) {
+        /* Preset had a base_url; option to override */
+        char override_url[512];
+        prompt_str("LLM base URL", base_url, override_url, sizeof(override_url));
+        strcpy(base_url, override_url);
+    }
 
-    /* Search */
-    printf("\nSearch Configuration (optional)\n");
-    printf("-------------------------------\n");
-    printf("Brave Search API Key: "); fflush(stdout);
-    fgets(line, sizeof(line), stdin);
-    line[strcspn(line, "\r\n")] = '\0';
-    if (line[0]) cJSON_AddStringToObject(search, "brave_key", line);
+    printf("\n");
 
-    printf("Tavily Search API Key: "); fflush(stdout);
-    fgets(line, sizeof(line), stdin);
-    line[strcspn(line, "\r\n")] = '\0';
-    if (line[0]) cJSON_AddStringToObject(search, "tavily_key", line);
+    /* ================================================================
+     * Section 2 — IM Channels
+     * ================================================================ */
+    printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+    printf("  2. IM Channels (消息渠道接入)\n");
+    printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n");
+    printf("  The agent can receive and reply to messages through\n");
+    printf("  various IM platforms. Select which channels to enable.\n");
+    printf("  You will be prompted for credentials for each enabled channel.\n\n");
+
+    printf("  [Local IM / Web Chat] — Built-in web-based IM, always available.\n");
+
+    bool qq_enabled      = prompt_yes_no("Enable QQ Bot?", false);
+    char qq_app_id[128]  = "";
+    char qq_app_secret[256] = "";
+    if (qq_enabled) {
+        printf("  QQ Bot requires App ID + App Secret from https://q.qq.com\n");
+        prompt_str("QQ App ID", NULL, qq_app_id, sizeof(qq_app_id));
+        prompt_str("QQ App Secret", NULL, qq_app_secret, sizeof(qq_app_secret));
+    }
+
+    bool tg_enabled      = prompt_yes_no("Enable Telegram Bot?", false);
+    char tg_bot_token[256] = "";
+    if (tg_enabled) {
+        printf("  Telegram Bot requires a Bot Token from @BotFather\n");
+        prompt_str("Bot Token", NULL, tg_bot_token, sizeof(tg_bot_token));
+    }
+
+    bool feishu_enabled     = prompt_yes_no("Enable Feishu/Lark?", false);
+    char feishu_app_id[128]  = "";
+    char feishu_app_secret[256] = "";
+    if (feishu_enabled) {
+        printf("  Feishu/Lark requires App ID + App Secret from Feishu Open Platform\n");
+        prompt_str("App ID", NULL, feishu_app_id, sizeof(feishu_app_id));
+        prompt_str("App Secret", NULL, feishu_app_secret, sizeof(feishu_app_secret));
+    }
+
+    bool wechat_enabled       = prompt_yes_no("Enable WeChat (微信)?", false);
+    char wechat_token[256]     = "";
+    char wechat_base_url[256]  = "";
+    char wechat_cdn_url[256]   = "";
+    char wechat_account_id[64] = "";
+    if (wechat_enabled) {
+        printf("  WeChat requires a token and account configuration\n");
+        prompt_str("Token", NULL, wechat_token, sizeof(wechat_token));
+        prompt_str("Base URL", "https://ilinkai.weixin.qq.com", wechat_base_url, sizeof(wechat_base_url));
+        prompt_str("CDN Base URL", "https://novac2c.cdn.weixin.qq.com/c2c", wechat_cdn_url, sizeof(wechat_cdn_url));
+        prompt_str("Account ID", "default", wechat_account_id, sizeof(wechat_account_id));
+    }
+
+    printf("\n");
+
+    /* ================================================================
+     * Section 3 — Web Search
+     * ================================================================ */
+    printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+    printf("  3. Web Search (optional)\n");
+    printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n");
+    printf("  API keys for web search providers (optional).\n");
+    printf("  Leave empty to skip.\n\n");
+
+    prompt_str("Brave Search API key", "", line, sizeof(line));
+    char brave_key[256]; strcpy(brave_key, line);
+
+    prompt_str("Tavily Search API key", "", line, sizeof(line));
+    char tavily_key[256]; strcpy(tavily_key, line);
+
+    printf("\n");
+
+    /* ================================================================
+     * Section 4 — Display
+     * ================================================================ */
+    printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+    printf("  4. Display\n");
+    printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n");
+
+    bool display_enabled = prompt_yes_no("Enable simulated LCD display window?", true);
+
+    printf("\n");
+
+    /* ================================================================
+     * Build config.json
+     * ================================================================ */
+    char dir[512];
+    get_data_dir(dir, sizeof(dir));
+    platform_mkdir(dir);
+
+    cJSON *root = cJSON_CreateObject();
+
+    cJSON *llm = cJSON_AddObjectToObject(root, "llm");
+    cJSON_AddStringToObject(llm, "api_key", api_key);
+    cJSON_AddStringToObject(llm, "model", model);
+    cJSON_AddStringToObject(llm, "profile", profile);
+    cJSON_AddStringToObject(llm, "base_url", base_url);
+    cJSON_AddStringToObject(llm, "auth_type", "");
+    cJSON_AddStringToObject(llm, "timeout_ms", "120000");
+    cJSON_AddStringToObject(llm, "max_tokens", "8192");
+
+    cJSON *channels = cJSON_AddObjectToObject(root, "channels");
+
+    cJSON *local_im = cJSON_AddObjectToObject(channels, "local_im");
+    cJSON_AddBoolToObject(local_im, "enabled", cJSON_True);
+
+    cJSON *qq = cJSON_AddObjectToObject(channels, "qq");
+    cJSON_AddBoolToObject(qq, "enabled", qq_enabled ? cJSON_True : cJSON_False);
+    cJSON_AddStringToObject(qq, "app_id", qq_app_id);
+    cJSON_AddStringToObject(qq, "app_secret", qq_app_secret);
+
+    cJSON *tg = cJSON_AddObjectToObject(channels, "telegram");
+    cJSON_AddBoolToObject(tg, "enabled", tg_enabled ? cJSON_True : cJSON_False);
+    cJSON_AddStringToObject(tg, "bot_token", tg_bot_token);
+
+    cJSON *feishu = cJSON_AddObjectToObject(channels, "feishu");
+    cJSON_AddBoolToObject(feishu, "enabled", feishu_enabled ? cJSON_True : cJSON_False);
+    cJSON_AddStringToObject(feishu, "app_id", feishu_app_id);
+    cJSON_AddStringToObject(feishu, "app_secret", feishu_app_secret);
+
+    cJSON *wechat = cJSON_AddObjectToObject(channels, "wechat");
+    cJSON_AddBoolToObject(wechat, "enabled", wechat_enabled ? cJSON_True : cJSON_False);
+    cJSON_AddStringToObject(wechat, "token", wechat_token);
+    cJSON_AddStringToObject(wechat, "base_url", wechat_base_url);
+    cJSON_AddStringToObject(wechat, "cdn_base_url", wechat_cdn_url);
+    cJSON_AddStringToObject(wechat, "account_id", wechat_account_id);
+
+    cJSON *search = cJSON_AddObjectToObject(root, "search");
+    cJSON_AddStringToObject(search, "brave_key", brave_key);
+    cJSON_AddStringToObject(search, "tavily_key", tavily_key);
+
+    cJSON *display = cJSON_AddObjectToObject(root, "display");
+    cJSON_AddBoolToObject(display, "enabled", display_enabled ? cJSON_True : cJSON_False);
+    cJSON_AddNumberToObject(display, "lcd_width", 480);
+    cJSON_AddNumberToObject(display, "lcd_height", 480);
+    cJSON_AddStringToObject(display, "emote_text", "");
+
+    cJSON *session = cJSON_AddObjectToObject(root, "session");
+    cJSON_AddStringToObject(session, "context_token_budget", "96256");
+    cJSON_AddStringToObject(session, "max_message_chars", "8192");
+    cJSON_AddStringToObject(session, "compress_threshold_percent", "80");
 
     /* Write config */
     char *out = cJSON_Print(root);
     if (out) {
-        char dir[512];
-        get_data_dir(dir, sizeof(dir));
-        platform_mkdir(dir);
-        fp = fopen(config_path, "wb");
+        FILE *fp = fopen(config_path, "wb");
         if (fp) {
             fputs(out, fp);
             fclose(fp);
@@ -362,6 +555,21 @@ static int cmd_config(int argc, char **argv)
         free(out);
     }
     cJSON_Delete(root);
+
+    /* Summary */
+    printf("\n========================================\n");
+    printf("  Configuration complete!\n");
+    printf("========================================\n\n");
+    printf("Summary:\n");
+    printf("  LLM:        %s / %s\n", profile, model);
+    printf("  Local IM:   enabled (always on)\n");
+    printf("  QQ:         %s\n", qq_enabled ? "enabled" : "disabled");
+    printf("  Telegram:   %s\n", tg_enabled ? "enabled" : "disabled");
+    printf("  Feishu:     %s\n", feishu_enabled ? "enabled" : "disabled");
+    printf("  WeChat:     %s\n", wechat_enabled ? "enabled" : "disabled");
+    printf("  Display:    %s\n", display_enabled ? "enabled" : "disabled");
+    printf("\nRun 'crush-claw start' to launch the agent.\n");
+
     return 0;
 }
 
@@ -731,16 +939,45 @@ int main(int argc, char **argv)
         }
     }
 
-    /* Forward everything else to the agent's REPL */
-    /* Build full command line from remaining args */
+    /* Forward everything else to the agent's REPL.
+     * On Windows, argv is in the system code page (e.g. GBK); convert
+     * each argument to UTF-8 so the agent / LLM receive valid Unicode. */
     char full_cmd[MAX_LINE];
     size_t pos = 0;
     for (int i = 1; i < argc && pos < sizeof(full_cmd) - 2; i++) {
         if (i > 1) full_cmd[pos++] = ' ';
+
+#if defined(_WIN32)
+        /* ACP → UTF-16 → UTF-8 conversion */
+        int wlen = MultiByteToWideChar(CP_ACP, 0, argv[i], -1, NULL, 0);
+        if (wlen > 0) {
+            wchar_t *wbuf = malloc((size_t)wlen * sizeof(wchar_t));
+            if (wbuf) {
+                MultiByteToWideChar(CP_ACP, 0, argv[i], -1, wbuf, wlen);
+                int ulen = WideCharToMultiByte(CP_UTF8, 0, wbuf, -1,
+                                               NULL, 0, NULL, NULL);
+                if (ulen > 0) {
+                    char *ubuf = malloc((size_t)ulen);
+                    if (ubuf) {
+                        WideCharToMultiByte(CP_UTF8, 0, wbuf, -1,
+                                           ubuf, ulen, NULL, NULL);
+                        size_t len = strlen(ubuf);
+                        if (pos + len >= sizeof(full_cmd) - 1)
+                            len = sizeof(full_cmd) - pos - 1;
+                        memcpy(full_cmd + pos, ubuf, len);
+                        pos += len;
+                        free(ubuf);
+                    }
+                }
+                free(wbuf);
+            }
+        }
+#else
         size_t len = strlen(argv[i]);
         if (pos + len >= sizeof(full_cmd) - 1) len = sizeof(full_cmd) - pos - 1;
         memcpy(full_cmd + pos, argv[i], len);
         pos += len;
+#endif
     }
     full_cmd[pos] = '\0';
 

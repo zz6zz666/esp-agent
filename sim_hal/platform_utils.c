@@ -42,8 +42,17 @@ void platform_restart(void)
     GetModuleFileNameA(NULL, exe_path, sizeof(exe_path));
 
     char cmdline[8192] = "";
+
+    if (strchr(exe_path, ' ')) {
+        strcat(cmdline, "\"");
+        strcat(cmdline, exe_path);
+        strcat(cmdline, "\"");
+    } else {
+        strcat(cmdline, exe_path);
+    }
+
     for (int i = 1; i < g_restart_argc; i++) {
-        if (i > 1) strcat(cmdline, " ");
+        strcat(cmdline, " ");
         if (strchr(g_restart_argv[i], ' ')) {
             strcat(cmdline, "\"");
             strcat(cmdline, g_restart_argv[i]);
