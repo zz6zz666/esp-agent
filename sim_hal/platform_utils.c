@@ -24,6 +24,83 @@
 # include <errno.h>
 #endif
 
+/* ---- restart state (captured at startup) ---- */
+
+static int    g_restart_argc = 0;
+static char **g_restart_argv = NULL;
+
+void platform_restart_capture(int argc, char **argv)
+{
+    g_restart_argc = argc;
+    g_restart_argv = argv;
+}
+
+void platform_restart(void)
+{
+#if defined(PLATFORM_WINDOWS)
+    char exe_path[MAX_PATH];
+    GetModuleFileNameA(NULL, exe_path, sizeof(exe_path));
+
+    char cmdline[8192] = "";
+    for (int i = 1; i < g_restart_argc; i++) {
+        if (i > 1) strcat(cmdline, " ");
+        if (strchr(g_restart_argv[i], ' ')) {
+            strcat(cmdline, "\"");
+            strcat(cmdline, g_restart_argv[i]);
+            strcat(cmdline, "\"");
+        } else {
+            strcat(cmdline, g_restart_argv[i]);
+        }
+    }
+
+    STARTUPINFOA si = { sizeof(si) };
+    PROCESS_INFORMATION pi = {0};
+    if (CreateProcessA(exe_path, cmdline, NULL, NULL, FALSE,
+                       DETACHED_PROCESS, NULL, NULL, &si, &pi)) {
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+    }
+    ExitProcess(0);
+#else
+    /* fork + exec: the child becomes the new daemon process with a fresh
+       PID, while the parent exits — avoiding stale-socket / PID-file / FD
+       inheritance issues that happen with raw execv(). */
+    pid_t pid = fork();
+    if (pid < 0) {
+        fprintf(stderr, "esp_restart: fork failed: %s\n", strerror(errno));
+        exit(1);
+    }
+
+    if (pid == 0) {
+        /* Child: close inherited listener socket, then exec fresh binary.
+           SDL's display FD, the listener socket, etc. are all inherited;
+           closing stdin/stdout/stderr + all FDs >= 3 before exec is the
+           safest portable way to get a truly clean slate. */
+        int max_fd = (int)sysconf(_SC_OPEN_MAX);
+        if (max_fd < 0) max_fd = 1024;
+        for (int fd = 3; fd < max_fd; fd++) close(fd);
+
+        char exe_path[512];
+        ssize_t n = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+        if (n > 0) {
+            exe_path[n] = '\0';
+        } else {
+            strncpy(exe_path, g_restart_argv[0], sizeof(exe_path) - 1);
+            exe_path[sizeof(exe_path) - 1] = '\0';
+        }
+
+        execv(exe_path, g_restart_argv);
+        /* If we reach here, execv failed */
+        fprintf(stderr, "esp_restart: execv(%s) failed: %s\n",
+                exe_path, strerror(errno));
+        _exit(1);
+    }
+
+    /* Parent: exit immediately — the child continues independently */
+    exit(0);
+#endif
+}
+
 /* ---- platform_get_data_dir ---- */
 
 void platform_get_data_dir(char *buf, size_t size)

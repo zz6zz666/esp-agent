@@ -28,6 +28,9 @@
 
 #include "app_claw.h"
 #include "app_capabilities.h"
+
+/* platform_utils.c — restart support */
+extern void platform_restart_capture(int argc, char **argv);
 #include "cap_cli.h"
 #include "cap_lua_sandbox.h"
 #include "cJSON.h"
@@ -464,6 +467,8 @@ static void print_usage(const char *prog)
 
 int main(int argc, char **argv)
 {
+    platform_restart_capture(argc, argv);
+
     {
         struct timespec ts;
         clock_gettime(CLOCK_MONOTONIC, &ts);

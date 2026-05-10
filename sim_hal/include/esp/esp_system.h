@@ -29,10 +29,11 @@ static inline void esp_restart(void)
     g_soft_restart_requested = true;
 }
 #else
+void platform_restart(void);
+
 static inline void esp_restart(void)
 {
-    fprintf(stderr, "esp_restart() called — exiting simulator\n");
-    exit(0);
+    platform_restart();
 }
 #endif
 

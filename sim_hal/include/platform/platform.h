@@ -63,6 +63,19 @@ int platform_get_pid(void);
  */
 int platform_write_pid_file(const char *path);
 
+/*
+ * Capture the original command-line for process restart.
+ * Call once from main() before any argument parsing.
+ */
+void platform_restart_capture(int argc, char **argv);
+
+/*
+ * Restart the current process by spawning a new instance and exiting.
+ * On Linux this uses execv() (in-place replacement, same PID).
+ * On Windows this uses CreateProcess() + ExitProcess().
+ */
+void platform_restart(void);
+
 #ifdef __cplusplus
 }
 #endif
