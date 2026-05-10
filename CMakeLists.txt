@@ -155,7 +155,7 @@ add_compile_definitions(
     CONFIG_ESP_CONSOLE_UART_DEFAULT=1
     CONFIG_CLAW_CORE_STAGE_VERBOSITY_VERBOSE=1
     "$<$<BOOL:${WIN32}>:CONFIG_IDF_TARGET=\"windows-x86_64\">"
-    "$<$<NOT:$<BOOL:${WIN32}>>:CONFIG_IDF_TARGET=\"linux-x86_64\">"
+    "$<$<NOT:$<BOOL:${WIN32}>>:CONFIG_IDF_TARGET=\"linux-${CMAKE_SYSTEM_PROCESSOR}\">"
 )
 
 # ---- Include paths ----
