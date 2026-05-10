@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Version=1.1.0
+Name=Crush Claw
+GenericName=Desktop AI Agent
+Comment=Desktop simulator for the esp-claw embedded AI agent framework
+Exec=esp-claw-desktop --daemon
+Icon=lobster
+Terminal=false
+Categories=Utility;Development;
+Keywords=AI;agent;desktop;simulator;LLM;ESP32;
+StartupNotify=false
+StartupWMClass=esp-claw-desktop
+X-GNOME-Autostart-enabled=true
+Keywords[zh]=AI;智能;桌面模拟器;

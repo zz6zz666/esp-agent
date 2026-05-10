@@ -1,92 +1,80 @@
-# Crush Claw —— 基于esp-claw的超轻量级沙盒claw（esp-claw Simulator）
+<p align="center">
+  <img src="claw-animation.svg" alt="Crush Claw" width="200">
+</p>
 
-在 Linux 桌面端完整运行 [esp-claw](https://github.com/espressif/esp-claw) 嵌入式 AI Agent 框架，无需 ESP32 硬件。通过一套 POSIX 兼容层（FreeRTOS→pthread、ESP-IDF→stub），将 esp-claw 的核心代码直接在桌面 Linux 上编译运行，提供模拟 LCD 屏和 lua 脚本执行能力。
+<h1 align="center">🦞 Crush Claw</h1>
 
-## 特性
+<p align="center">
+  <a href="https://crush-claw.pages.dev" target="_blank">🌐 官网</a>
+  ·
+  <a href="https://github.com/zz6zz666/crush-claw" target="_blank">GitHub</a>
+</p>
 
-- **零硬件依赖** — 不需要 ESP32 开发板、不需要 JTAG 调试器，纯软件模拟
-- **即装即用** — 提供预构建 `.deb` 包，一键安装，自动解决依赖
-- **DeepSeek 兼容** — 内置 OpenAI 兼容后端，支持 DeepSeek、OpenAI、Ollama 等
-- **直接命令转发** — 管理命令之外的所有命令（`ask`、`cap`、`lua`、`skill` 等）直接转发到 Agent 内部 CLI，无需进入子 REPL
-- **屏幕模拟** — 通过 SDL2 窗口模拟 ESP32 LCD 显示屏，可配置关闭
-- **systemd 用户服务** — 支持登录自动启动
-- **独立设计** — 模拟器代码完全与上游 `esp-claw/` 分离，互不污染
+> 一个安全、可爱、属于两个人的桌面小伙伴。
 
-## 系统要求
+Crush Claw 运行在你对象（或朋友、伴侣）的电脑上，你通过 AI 可以远程控制屏幕上的一只小龙虾 —— 让它绘制彩虹、告白动画、迷你游戏，或者只是静静地趴在那里陪伴。
 
-- **操作系统**: Linux（Ubuntu 22.04+ / Debian 12+ 或其他 systemd 发行版）
-- **架构**: x86_64 (amd64)
+**给枯燥的研究生生活添点色彩，给打工人摸鱼的桌面来点惊喜。**
+
+## 它是怎么玩的？
+
+```
+你（远程）              你对象的电脑
+    │                        │
+    ├─ 不说话 → ─────────── 小龙虾窗口最小化 or 置顶陪伴
+    │                         └─ 由对象自己决定
+    │
+    ├─ 发消息 ────────────── 小龙虾保持或隐藏
+    │  "画一颗爱心"           └─ Lua 绘图窗口自动弹出
+    │                          └─ 方形极简画布
+    │                          └─ 键盘/鼠标可互动
+    │                          └─ 绘制结束 → 绘图窗口关闭
+    │                          └─ 小龙虾恢复原先的显隐状态
+    │
+    └─ 对象嫌你太烦 ──────── 任务栏右键 "始终隐藏"
+                              └─（希望你不会让对象走到这一步）
+```
+
+---
+
+## 特色
+
+| 特性                       | 说明                                                                             |
+| -------------------------- | -------------------------------------------------------------------------------- |
+| 🦞**小龙虾动画**     | Emote 动画引擎驱动的桌面吉祥物，支持多种情绪和动作                               |
+| 🎨**远程绘画**       | AI 通过 Lua 脚本在对方的屏幕上绘制图案、文字、小游戏                             |
+| 🛡️**沙盒安全**     | Lua 脚本引擎完全隔离（`io/os/load/stdin` 全部封禁，10MB 内存硬限制，路径锚定） |
+| ⌨️**键鼠交互**     | 支持键盘和鼠标输入，小龙虾可以回应互动                                           |
+| 🪟**双窗口智能显隐** | 小龙虾桌宠始终置顶常伴；折叠（隐藏）后不影响绘图弹窗；绘图结束自动恢复           |
+| 🌐**多 IM 渠道**     | QQ、Telegram、微信、飞书、Web IM 均可接入                                        |
+| 💻**跨平台**         | Windows + Linux                                                                  |
+
+---
 
 ## 快速开始
 
-### 方式一：预构建包安装（推荐）
+### 给对象安装
 
-```bash
-# 1. 安装 .deb 包
-sudo apt install ./crush-claw_1.0.0_amd64.deb
+```cmd
+REM 1. 在你的电脑上一键安装
+crush-claw-setup-1.0.0.exe
 
-# 2. 首次配置（设置 LLM API Key）
-crush-claw config
-
-# 3. 启动 Agent
-crush-claw start
-
-# 4. 向 Agent 发送消息
-crush-claw ask "你好"
+REM 2. 把配置文件发给对象
+REM 把你的 LLM Token 和 IM Channel Key 写入 config.json
 ```
 
-### 方式二：从源码构建
-
-```bash
-# 1. 安装编译依赖
-sudo apt install build-essential cmake pkg-config \
-  libcurl4-openssl-dev liblua5.4-dev libsdl2-dev libjson-c-dev
-
-# 2. 克隆仓库
-git clone <repo-url> crush-claw && cd crush-claw
-git submodule update --init
-
-# 3. 编译
-./crush-claw build
-
-# 4. 配置并启动
-./crush-claw config
-./crush-claw start
-./crush-claw ask "你好"
-```
-
-## 配置 LLM
-
-### 方式一：交互式配置向导（推荐）
-
-```bash
-crush-claw config
-```
-
-交互式向导会依次询问 API Key、模型名称、Profile 类型、自定义 Base URL 等信息。
-
-### 方式二：环境变量
-
-```bash
-LLM_API_KEY=sk-xxx LLM_MODEL=gpt-4o LLM_PROFILE=openai crush-claw start
-```
-
-环境变量会覆盖 `config.json` 中的对应值。
-
-### 方式三：直接编辑配置文件
-
-`~/.crush-claw/config.json`:
+### 配置文件 （config.json）
 
 ```json
 {
   "llm": {
-    "api_key": "sk-d*****************************c",
+    "api_key": "sk-d**********************c",
     "model": "deepseek-v4-flash",
     "profile": "anthropic",
     "base_url": "https://api.deepseek.com/anthropic",
     "auth_type": "",
     "timeout_ms": "120000",
-    "max_tokens": "1048576"
+    "max_tokens": "409600"
   },
   "channels": {
     "local_im": {
@@ -94,8 +82,8 @@ LLM_API_KEY=sk-xxx LLM_MODEL=gpt-4o LLM_PROFILE=openai crush-claw start
     },
     "qq": {
       "enabled": true,
-      "app_id": "",
-      "app_secret": ""
+      "app_id": "1*******4",
+      "app_secret": "J4********************Pg"
     },
     "telegram": {
       "enabled": false,
@@ -119,251 +107,142 @@ LLM_API_KEY=sk-xxx LLM_MODEL=gpt-4o LLM_PROFILE=openai crush-claw start
     "tavily_key": ""
   },
   "display": {
-    "enabled": true
+    "enabled": true,
+    "lcd_width": 480,
+    "lcd_height": 480,
+	"emote_text": "Wi-Fi connected"
   }
 }
+
 ```
 
-**支持的 `profile` 值：**
+### 启动
 
-| profile       | 默认 API 端点                    |
-| ------------- | -------------------------------- |
-| `openai`    | `https://api.openai.com/v1`    |
-| `anthropic` | `https://api.anthropic.com/v1` |
-| `custom`    | 自定义后端                       |
+```cmd
+REM 对象收到配置文件后，放入数据目录
+start %USERPROFILE%\.crush-claw\config.json
 
-### 常用 LLM 服务商配置示例
-
-**DeepSeek:**
-
-```json
-{
-  "llm": {
-    "api_key": "sk-your-deepseek-key",
-    "model": "deepseek-chat",
-    "profile": "openai",
-    "base_url": "https://api.deepseek.com"
-  }
-}
+REM 启动小龙虾
+crush-claw start
 ```
 
-**本地 Ollama:**
+看到屏幕上的小龙虾了？现在你可以通过 IM 向它发送指令了。
 
-```json
-{
-  "llm": {
-    "api_key": "ollama",
-    "model": "llama3",
-    "profile": "openai",
-    "base_url": "http://localhost:11434/v1"
-  }
-}
+---
+
+## 安全说明
+
+**Crush Claw 将沙箱安全性作为第一要务。** 所有用户提交的 Lua 脚本都在一个深度隔离的虚拟环境中执行：
+
+```
+❌ os.execute()          — 任意命令执行
+❌ io.open()             — 任意文件读写
+❌ load() / loadfile()   — 动态代码注入
+❌ debug.* (除 traceback) — VM 内部操纵
+❌ string.dump()         — 字节码逃逸
+❌ package.loadlib()     — C 模块加载
+❌ storage 路径穿越       — 超出数据目录
+❌ capability.call 外能力 — 只读白名单
+✅ 内存分配硬限制 10MB    — 防内存耗尽
+✅ 执行超时 60 秒        — 防死循环
 ```
 
-## CLI 命令参考
+详细参看 [SANDBOX_SECURITY.md](SANDBOX_SECURITY.md)。
 
-### crush-claw 管理命令
+> ⚠️ **重要须知**：使用 Crush Claw 需要双方相互信任。你的 LLM API Key 和 Channel Token 会存储在对方的电脑上。请确保：
+>
+> 1. 你不会恶意利用 Lua 脚本寻找漏洞攻击对方电脑
+> 2. 对方不会盗用你的 API Key
+> 3. 沙箱机制目前较为完善，但不排除存在尚未检测到的漏洞
 
-| 命令                                      | 说明                                       |
-| ----------------------------------------- | ------------------------------------------ |
-| `crush-claw --help`                     | 显示桌面端帮助（含 esp-claw 内部命令列表） |
-| `crush-claw config`                     | 交互式配置向导（首次使用）                 |
-| `crush-claw start`                      | 后台启动 Agent，实时显示日志               |
-| `crush-claw stop`                       | 优雅停止 Agent                             |
-| `crush-claw restart`                    | 重启 Agent                                 |
-| `crush-claw status`                     | 检查 Agent 运行状态                        |
-| `crush-claw logs`                       | 查看 Agent 运行日志                        |
-| `crush-claw build`                      | 从源码编译（仅开发模式）                   |
-| `crush-claw clean`                      | 清理编译产物                               |
-| `crush-claw service enable`             | 启用 systemd 用户服务（登录自启）          |
-| `crush-claw service disable`            | 禁用 systemd 用户服务                      |
-| `crush-claw service start\|stop\|status`  | systemd 服务控制                           |
-| `crush-claw --version`                  | 显示版本号                                 |
+---
 
-### Agent 命令（直接转发）
+## CLI 命令
 
-除上述管理命令以外，所有以 `crush-claw` 开头的命令都会直接转发给 Agent 内部 CLI
-处理（通过 Unix Socket 单次请求-响应）。无需进入子 REPL。
+| 命令                                     | 说明           |
+| ---------------------------------------- | -------------- |
+| `crush-claw config`                    | 交互式配置向导 |
+| `crush-claw start`                     | 后台启动 Agent |
+| `crush-claw stop`                      | 停止 Agent     |
+| `crush-claw restart`                   | 重启 Agent     |
+| `crush-claw status`                    | 查看运行状态   |
+| `crush-claw logs`                      | 查看日志       |
+| `crush-claw service enable\|disable`    | 开机自启管理   |
+| `crush-claw --help`                    | 查看全部命令   |
+| `crush-claw ask "你好"`                | 远程对话       |
+| `crush-claw lua --run --path demo.lua` | 运行 Lua 脚本  |
+| `crush-claw cap list`                  | 查看能力列表   |
 
-查看 Agent 内部帮助：
+> Crush Claw 兼容 esp-claw 框架内置的全部 [REPL 命令](https://esp-claw.com/zh-cn/reference-project/console-usage/)。当 Agent 处于运行状态时，在 esp-claw 原生命令前添加 `crush-claw` 前缀即可调用，例如 `crush-claw ask "你好"`、`crush-claw cap list`。上表仅列出常用命令，更多命令请查阅上述文档。
 
-```bash
-# 显示桌面端帮助（管理命令 + Agent 内部命令列表）
-crush-claw --help
-
-# 仅查看 esp-claw 内部的帮助（需 Agent 在运行）
-crush-claw esp-claw help
-```
-
-| 命令                                    | 说明                                         |
-| --------------------------------------- | -------------------------------------------- |
-| `crush-claw ask <prompt>`            | 提交多轮对话请求（使用当前会话）             |
-| `crush-claw ask_once <prompt>`       | 提交单轮对话请求（无会话历史）               |
-| `crush-claw session [id]`            | 查看或切换当前会话                           |
-| `crush-claw cap list`                | 列出所有已注册的能力 (~54项)                 |
-| `crush-claw cap groups`              | 列出所有能力分组 (13组)                      |
-| `crush-claw cap call <name> <json>`  | 直接调用指定能力（需传入 JSON，无参用 `{}`）  |
-| `crush-claw auto rules`              | 查看事件路由规则                             |
-| `crush-claw auto last`               | 查看最后一次路由结果                         |
-| `crush-claw auto reload`             | 重新加载路由规则                             |
-| `crush-claw lua --list`              | 列出可用的 Lua 脚本                          |
-| `crush-claw lua --run --path <file>` | 运行 Lua 脚本                                |
-| `crush-claw skill --catalog`         | 查看技能目录 (3项)                           |
-| `crush-claw skill --activate <name>` | 激活指定技能                                 |
-| `crush-claw hello`                   | 未知命令示例 — Agent 返回 "Unknown command" |
-
-## systemd 用户服务
-
-安装 `.deb` 包后，systemd 用户服务文件已位于 `/usr/lib/systemd/user/crush-claw.service`。
-
-```bash
-# 启用登录自动启动
-crush-claw service enable
-
-# 启动/停止/状态
-crush-claw service start
-crush-claw service stop
-crush-claw service status
-```
+---
 
 ## 数据目录
 
-所有运行时数据存储在 `~/.crush-claw/`：
-
 ```
-~/.crush-claw/
-├── config.json              # Agent 配置
-├── agent.sock               # CLI 连接用的 Unix Socket
-├── agent.pid                # 进程 PID 文件
-├── skills/                  # 技能注册表 + 技能文档 (.md)
-├── scripts/builtin/         # Lua 脚本（自动加载）
-├── router_rules/            # 事件路由规则
-├── scheduler/               # 定时任务配置
-├── sessions/                # 会话状态
-├── memory/                  # 长期记忆存储
-└── inbox/                   # IM 附件存储
+%USERPROFILE%\.crush-claw\
+├── config.json              # 配置文件（含你的 Key）
+├── agent.sock               # IPC 通道
+├── agent.pid                # PID 文件
+├── scripts/builtin/         # Lua 脚本
+├── skills/                  # 技能文档
+├── memory/                  # 记忆存储
+└── sessions/                # 会话记录
 ```
 
-## 架构概览
+---
+
+## 系统要求
+
+- **Windows**: Windows 10+ x64
+- **Linux**: Ubuntu 22.04+ / Debian 12+ x86_64
+
+---
+
+## 从源码构建
+
+```bash
+git clone <repo-url> && cd crush-claw
+git submodule update --init
+
+# 依赖安装见 CLAUDE.md
+mkdir build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release
+make -j$(nproc)        # Linux
+# mingw32-make -j4     # Windows
+```
+
+---
+
+## 架构
 
 ```
 crush-claw/
-├── esp-claw/            # 上游 esp-claw 仓库（只读，不修改）
-│   └── components/      # 原始 ESP32 源码
-├── sim_hal/             # 桌面模拟层
-│   ├── include/         # ESP-IDF / FreeRTOS 头文件桩
-│   │   ├── esp/         #   esp_err, esp_log, esp_console, ...
-│   │   ├── freertos/    #   FreeRTOS.h, task.h, queue.h, ...
-│   │   └── argtable3/   #   argtable3 最小桩
-│   ├── freertos_shim.c  # FreeRTOS → pthread 实现
-│   ├── console_unix.c   # esp_console → Unix Socket REPL
-│   ├── http_curl.c      # LLM HTTP 传输 (libcurl)
-│   ├── display_sdl2.c   # 显示屏模拟 (SDL2)
-│   ├── nvs.c            # NVS 存储模拟 (cJSON)
-│   └── cJSON.c          # JSON 解析库
-├── main_desktop.c       # 桌面程序入口
-├── CMakeLists.txt       # CMake 构建系统
-├── crush-claw           # CLI 管理脚本
-├── package.sh           # .deb 打包脚本
-├── packaging/           # Debian 包结构
-└── README.md
+├── esp-claw/            # 上游 AI Agent 引擎（只读）
+├── sim_hal/             # 桌面模拟层 + Lua 沙箱
+├── cli/                 # CLI 管理工具
+├── installer/           # Inno Setup 安装器
+└── main_desktop.c       # 桌面入口
 ```
 
-### FreeRTOS → POSIX 映射
+---
 
-| FreeRTOS API                        | Linux 等效实现                                       |
-| ----------------------------------- | ---------------------------------------------------- |
-| `xTaskCreate`                     | `pthread_create`                                   |
-| `vTaskDelete`                     | `pthread_cancel` + `pthread_join`                |
-| `vTaskDelay`                      | `usleep`                                           |
-| `xQueueCreate/Send/Receive`       | 环形缓冲区 +`pthread_mutex_t` + `pthread_cond_t` |
-| `xSemaphoreCreateMutex/Take/Give` | `pthread_mutex_t` + `pthread_cond_t`             |
-| `xTaskGetTickCount`               | `gettimeofday` → 毫秒                             |
+## 🙏 致谢
 
-### 已启用的能力模块
+Crush Claw 的灵感源于 [esp-claw](https://esp-claw.com) —— 乐鑫科技（Espressif）出品的嵌入式 AI Agent 框架。我们的项目最初的想法是在桌面层为 esp-claw 构建一套完整的模拟运行环境（sim_hal），让开发者无需 ESP32 硬件也能验证代理逻辑。
 
-| 模块            | 功能                              | 状态   |
-| --------------- | --------------------------------- | ------ |
-| cap_im_local    | 本地 Web 即时通讯界面             | 已启用 |
-| cap_im_qq       | QQ Bot 网关与消息收发             | 已启用 |
-| cap_im_tg       | Telegram Bot 网关与消息收发       | 已启用 |
-| cap_im_feishu   | Feishu/Lark 网关与消息收发        | 已启用 |
-| cap_im_wechat   | WeChat Bot 网关与消息收发         | 已启用 |
-| cap_files       | 文件系统读写操作 (6 项能力)       | 已启用 |
-| cap_lua         | Lua 脚本执行引擎 (8 项能力)       | 已启用 |
-| cap_skill_mgr   | 技能注册/激活/停用 (5 项能力)     | 已启用 |
-| cap_router_mgr  | 事件路由规则管理 (6 项能力)       | 已启用 |
-| cap_session_mgr | 会话管理 (1 项能力)               | 已启用 |
-| claw_memory     | 长期记忆存储与提取 (5 项能力)     | 已启用 |
-| cap_system      | 系统信息：CPU/内存/WiFi/IP/uptime | 已启用 |
-| cap_time        | 获取当前时间                      | 已启用 |
-| cap_web_search  | 网络搜索 (Brave/Tavily)           | 已启用 |
-| cap_llm_inspect | 图片分析                          | 已启用 |
-| cap_scheduler   | 定时任务调度 (11 项能力)          | 已启用 |
-| cap_cli         | 运行允许的 CLI 命令               | 已启用 |
+esp-claw 提供了高质量的 AI Agent 引擎（claw_core、claw_cap、claw_skill、claw_memory 等核心模块），Crush Claw 复用了这些硬件无关的 C 代码，并在此基础上构建了桌面模拟层、Lua 沙箱、SDL2 窗口和 CLI 管理工具。
 
-## 常用操作示例
+感谢 esp-claw 团队的开源贡献。
 
-```bash
-# 查看所有注册的能力
-crush-claw cap list
+---
 
-# 向 LLM 发送消息
-crush-claw ask "你好，请介绍一下你自己"
+## 💬 联系我们
 
-# 让 Agent 操作文件
-crush-claw ask "请列出当前目录的所有文件"
+欢迎提交 [Issue](https://github.com/zz6zz666/crush-claw/issues) 或 [Pull Request](https://github.com/zz6zz666/crush-claw/pulls) 参与改进，也可邮件联系：**zz6zz666@qq.com**。
 
-# 让 Agent 记住信息
-crush-claw ask "请帮我记住：我最喜欢的颜色是蓝色"
+> 🛡️ **沙箱安全**：Lua 沙箱是 Crush Claw 的安全基石。若发现任何沙箱逃逸、权限绕过或其它安全漏洞，可**优先通过邮件**私下报告，我们会第一时间响应修复。
 
-# 运行 Lua 脚本
-crush-claw lua --run --path hello.lua
+---
 
-# 查看系统信息（无参 cap call 需传入 {}）
-crush-claw 'cap call get_system_info {}'
-crush-claw 'cap call get_memory_info {}'
-crush-claw 'cap call get_cpu_usage {}'
-
-# 查看记忆
-crush-claw 'cap call memory_list {}'
-
-# 有参数的 cap call（传入 JSON）
-crush-claw 'cap call scheduler_add {"cron":"0 */2 * * *","action":"run_lua script=hello.lua"}'
-
-# 切换会话
-crush-claw session my-new-session
-```
-
-## 常见问题
-
-**Q: 启动时报 `Failed to start app_claw` 错误？**
-
-检查 `~/.crush-claw/` 目录权限是否正确。可以尝试删除该目录后重新运行。
-
-**Q: 执行命令时报 `Agent is not running`？**
-
-先运行 `crush-claw start` 启动服务，用 `crush-claw status` 确认状态。
-
-**Q: 没有设置 LLM API Key 能运行吗？**
-
-可以。Agent 框架（事件路由、能力注册、技能管理、CLI 等）会正常启动，对话功能（`ask`）和记忆提取不可用。
-
-**Q: SDL2 窗口没有出现？**
-
-检查 `~/.crush-claw/config.json` 中 `display.enabled` 是否为 `true`。
-
-**Q: 如何切换不同的 LLM 服务商？**
-
-修改 `config.json` 中的 `profile` 和 `base_url` 即可。见上方"配置 LLM"章节的示例。
-
-**Q: 如何卸载？**
-
-```bash
-# 先停止所有运行中的实例
-crush-claw stop
-# 卸载
-sudo apt remove crush-claw
-# 可选：删除用户数据
-rm -rf ~/.crush-claw
-```
+Made with ❤️ for someone special.

@@ -77,8 +77,8 @@ static void get_defaults_dir(char *buf, size_t bufsz)
 #define DEFAULTS_DIR "/usr/share/crush-claw/defaults"
 static const char *get_defaults_dir(char *buf, size_t bufsz)
 {
-    (void)bufsz;
-    return DEFAULTS_DIR;
+    snprintf(buf, bufsz, "%s", DEFAULTS_DIR);
+    return buf;
 }
 #endif
 
@@ -125,9 +125,7 @@ extern const char *g_emote_config_path;
 extern esp_err_t cap_emote_text_register_group(void);
 extern void display_hal_main_loop_wait(uint32_t timeout_ms);
 
-#if defined(PLATFORM_WINDOWS)
-# include "tray_icon.h"
-#endif
+#include "tray_icon.h"
 
 /* ---- helpers ---- */
 
@@ -944,25 +942,28 @@ int main(int argc, char **argv)
             ESP_LOGW(TAG, "Failed to create display: %s", esp_err_to_name(d_err));
         }
         STARTUP_STAGE("display_hal_create returned");
-#if defined(PLATFORM_WINDOWS)
-        /* Sync always-hide from registry */
+        /* Sync always-hide from persistent storage */
         display_hal_set_always_hide(tray_always_hide_is_enabled());
+
         /* Initialize system tray icon (after SDL window is created) */
         if (display_hal_is_active()) {
-            void *native_hwnd = display_hal_get_native_window();
-            if (native_hwnd) {
+            void *native_handle = display_hal_get_native_window();
+            if (native_handle) {
                 STARTUP_STAGE("tray_icon_init");
-                tray_icon_init();
-                STARTUP_STAGE("tray_icon_set_sdl_window");
-                tray_icon_set_sdl_window(native_hwnd);
-        /* Now show the SDL window — tray icon removed it from taskbar,
-           so there's no taskbar icon flash. */
-                display_hal_show_window();
-                ESP_LOGI(TAG, "System tray icon initialized");
-                tray_icon_perform_update_check(CRUSH_CLAW_VERSION);
+                if (tray_icon_init()) {
+                    STARTUP_STAGE("tray_icon_set_sdl_window");
+                    tray_icon_set_sdl_window(native_handle);
+                    /* Now show the SDL window — tray hook removed it from
+                       taskbar/dock, so there's no icon flash. */
+                    display_hal_show_window();
+                    ESP_LOGI(TAG, "System tray icon initialized");
+                    tray_icon_perform_update_check(CRUSH_CLAW_VERSION);
+                } else {
+                    ESP_LOGW(TAG, "Tray icon init failed — window shown without tray");
+                    display_hal_show_window();
+                }
             }
         }
-#endif
     } else {
         ESP_LOGI(TAG, "SDL2 display skipped per config");
     }
@@ -1157,7 +1158,6 @@ int main(int argc, char **argv)
 
     /* Keep main thread alive, handle display present and events */
     while (s_running) {
-#if defined(PLATFORM_WINDOWS)
         /* Check tray icon quit request */
         if (tray_icon_quit_requested()) {
             s_running = false;
@@ -1182,27 +1182,25 @@ int main(int argc, char **argv)
             if (display_hal_is_emote_visible()) {
                 if (display_hal_recreate_emote()) {
                     /* Re-apply tray icon to the new emote window */
-                    void *hwnd = display_hal_get_native_window();
-                    if (hwnd) tray_icon_set_sdl_window(hwnd);
+                    void *handle = display_hal_get_native_window();
+                    if (handle) tray_icon_set_sdl_window(handle);
                     /* Force emote to redraw text/layers on the new surface */
                     emote_refresh_display();
                 }
             }
         }
-#endif
+
         /* Custom title bar minimize button */
         if (!display_hal_is_lua_mode() && display_hal_title_minimize_hit()) {
             display_hal_hide_window();
-#if defined(PLATFORM_WINDOWS)
             tray_icon_hide_window();
-#endif
         }
         display_hal_present();             /* always pump — processes lifecycle ops */
-#if defined(PLATFORM_WINDOWS)
+
         if (display_hal_consume_lua_switch_notification()) {
-            void *hwnd = display_hal_get_native_window();
-            if (hwnd) {
-                tray_icon_set_sdl_window(hwnd);
+            void *handle = display_hal_get_native_window();
+            if (handle) {
+                tray_icon_set_sdl_window(handle);
                 tray_icon_show_and_flash();
             }
         }
@@ -1210,10 +1208,9 @@ int main(int argc, char **argv)
         if (display_hal_is_active() && !display_hal_is_emote_visible()) {
             /* Window exists but user wants it hidden — keep hidden */
         } else if (display_hal_is_active()) {
-            void *hwnd = display_hal_get_native_window();
-            if (hwnd) tray_icon_set_sdl_window(hwnd);
+            void *handle = display_hal_get_native_window();
+            if (handle) tray_icon_set_sdl_window(handle);
         }
-#endif
         if (display_hal_is_active()) {
             /* In Lua mode, wait for script to signal (woken by display.present) */
             if (display_hal_is_lua_mode()) {
@@ -1227,10 +1224,8 @@ int main(int argc, char **argv)
     }
 
     /* Cleanup */
-#if defined(PLATFORM_WINDOWS)
     display_hal_save_window_position();
     tray_icon_cleanup();
-#endif
     display_hal_destroy();
     {
         char sock_path[PATH_MAX];

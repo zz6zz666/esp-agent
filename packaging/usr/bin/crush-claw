@@ -34,7 +34,7 @@
 
 set -euo pipefail
 
-VERSION="1.0.0"
+VERSION="1.1.0"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BUILD_DIR="${SCRIPT_DIR}/build"
 AGENT_DIR="${HOME}/.crush-claw"
@@ -365,7 +365,15 @@ cmd_config() {
     "tavily_key": "${search_tavily_key}"
   },
   "display": {
-    "enabled": ${display_enabled}
+    "enabled": ${display_enabled},
+    "lcd_width": 480,
+    "lcd_height": 480,
+    "emote_text": ""
+  },
+  "session": {
+    "context_token_budget": "96256",
+    "max_message_chars": "8192",
+    "compress_threshold_percent": "80"
   }
 }
 EOF

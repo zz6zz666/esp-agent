@@ -12,7 +12,7 @@ setlocal EnableDelayedExpansion
 set "SCRIPT_DIR=%~dp0"
 cd /d "%SCRIPT_DIR%"
 
-set "VERSION=1.0.1"
+set "VERSION=1.1.0"
 set "PKG_NAME=crush-claw-windows-v%VERSION%"
 
 echo === Packaging Crush Claw v%VERSION% for Windows ===

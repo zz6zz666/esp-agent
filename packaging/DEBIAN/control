@@ -1,13 +1,13 @@
 Package: crush-claw
-Version: 1.0.0
+Version: 1.1.0
 Section: utils
 Priority: optional
 Architecture: amd64
 Essential: no
 Depends: libc6 (>= 2.34), libcurl4 (>= 7.81), liblua5.4-0 (>= 5.4), libsdl2-2.0-0 (>= 2.0), libsdl2-ttf-2.0-0, libjson-c5 (>= 0.15), libpng16-16t64 (>= 1.6), fonts-wqy-zenhei
-Recommends: fonts-noto-color-emoji
+Recommends: fonts-noto-color-emoji, libgtk-3-0 (>= 3.24), libayatana-appindicator3-1 (>= 0.5)
 Maintainer: Crush Claw team
-Installed-Size: 3752
+Installed-Size: 4212
 Homepage: https://github.com/zz6zz666/crush-claw
 Description: Desktop simulator for the esp-claw embedded AI agent framework
  Crush Claw provides a complete Linux desktop test environment for

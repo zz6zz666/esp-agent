@@ -12,6 +12,11 @@ pkg_check_modules(CURL    REQUIRED libcurl)
 pkg_check_modules(LUA     REQUIRED lua5.4)
 pkg_check_modules(JSONC   REQUIRED json-c)
 
+if(NOT WIN32)
+    pkg_check_modules(GTK3           IMPORTED_TARGET gtk+-3.0)
+    pkg_check_modules(AYATANA_APPIND IMPORTED_TARGET ayatana-appindicator3-0.1)
+endif()
+
 # ---- our sim_hal library ----
 set(SIM_HAL_DIR  ${CMAKE_SOURCE_DIR}/sim_hal)
 set(SIM_INC_DIR  ${SIM_HAL_DIR}/include)
@@ -42,6 +47,7 @@ set(SIM_SRCS
     $<$<BOOL:${WIN32}>:${SIM_HAL_DIR}/memstream_stub.c>
     $<$<BOOL:${WIN32}>:${SIM_HAL_DIR}/stdout_wrapper.c>
     $<$<BOOL:${WIN32}>:${SIM_HAL_DIR}/tray_icon.c>
+    $<$<NOT:$<BOOL:${WIN32}>>:${SIM_HAL_DIR}/tray_icon_linux.c>
 )
 
 # ---- external deps (emote engine) ----
@@ -430,7 +436,15 @@ else()
         dl
         ssl
         crypto
+        X11
     )
+    if(GTK3_FOUND)
+        target_link_libraries(esp-claw-desktop PRIVATE PkgConfig::GTK3)
+        target_compile_definitions(esp-claw-desktop PRIVATE HAS_TRAY_LINUX_GTK=1)
+    endif()
+    if(AYATANA_APPIND_FOUND)
+        target_link_libraries(esp-claw-desktop PRIVATE PkgConfig::AYATANA_APPIND)
+    endif()
 endif()
 
 target_compile_options(esp-claw-desktop PRIVATE
