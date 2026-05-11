@@ -42,7 +42,6 @@
 static const char *TAG = "desktop_android";
 
 extern volatile bool s_agent_should_stop;
-volatile bool g_soft_restart_requested = false;
 
 /* Stubs / forward declarations from sim_hal */
 extern bool display_hal_is_active(void);
@@ -700,34 +699,6 @@ int desktop_main_android(const char *data_dir)
 
     ESP_LOGI(TAG, "Agent running. Entering main loop.");
     while (!s_agent_should_stop) {
-        if (g_soft_restart_requested) {
-            ESP_LOGI(TAG, "Soft restart requested — stopping Lua jobs...");
-            {
-                extern esp_err_t cap_lua_stop_all_jobs(const char *exclusive_filter,
-                                                      uint32_t wait_ms,
-                                                      char *output,
-                                                      size_t output_size);
-                cap_lua_stop_all_jobs(NULL, 2000, NULL, 0);
-            }
-            display_arbiter_release(DISPLAY_ARBITER_OWNER_EMOTE);
-            display_hal_destroy();
-            {
-                extern display_android_ctx_t g_display_ctx;
-                if (g_display_ctx.pixels) {
-                    free(g_display_ctx.pixels);
-                    g_display_ctx.pixels = NULL;
-                }
-                if (g_display_ctx.pixels_draw) {
-                    free(g_display_ctx.pixels_draw);
-                    g_display_ctx.pixels_draw = NULL;
-                }
-                g_display_ctx.lua_mode = false;
-            }
-            display_hal_create(NULL, NULL, 0, lcd_width, lcd_height);
-            display_arbiter_acquire(DISPLAY_ARBITER_OWNER_EMOTE);
-            g_soft_restart_requested = false;
-            ESP_LOGI(TAG, "Soft restart complete");
-        }
 
         if (display_hal_is_active()) {
             if (display_hal_is_lua_mode()) {

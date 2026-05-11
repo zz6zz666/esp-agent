@@ -48,6 +48,7 @@ typedef struct {
     jmethodID mid_on_owner_changed;
     jmethodID mid_on_frame_ready;
     jmethodID mid_on_display_enable;
+    jmethodID mid_on_restart_requested;
 
     /* Synchronization */
     pthread_mutex_t mutex;
@@ -83,6 +84,9 @@ void display_android_notify_owner_change(int owner_mode, int w, int h);
 
 /** Call back to Java: toggle display visibility */
 void display_android_notify_display_enable(bool enable);
+
+/** Call back to Java: request process restart (kill + relaunch service) */
+void display_android_request_restart(void);
 
 #ifdef __cplusplus
 }

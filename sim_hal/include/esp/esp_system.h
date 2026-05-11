@@ -19,14 +19,14 @@ extern "C" {
 #endif
 
 #if defined(PLATFORM_ANDROID)
-/* On Android we cannot kill the host process (it would take the UI with it).
- * Instead, set a flag that the main loop checks to trigger a soft restart:
- * stop all Lua jobs + reinitialize display, keeping the agent alive. */
-extern volatile bool g_soft_restart_requested;
+/* On Android, restart means killing the process and relaunching via
+ * AlarmManager. The JNI callback in FloatingWindowService.onRestartRequested()
+ * schedules a foreground-service PendingIntent before exiting. */
+void platform_android_restart(void);
 
 static inline void esp_restart(void)
 {
-    g_soft_restart_requested = true;
+    platform_android_restart();
 }
 #else
 void platform_restart(void);

@@ -27,6 +27,22 @@ volatile bool s_agent_should_stop = false;
 /* Saved data dir path */
 static char s_data_dir[512] = {0};
 
+/* Implements the Android version of platform restart.
+ * Called by esp_restart() (declared in esp_system.h).
+ * Triggers a JNI callback to Java which schedules AlarmManager
+ * and kills the process. */
+void platform_android_restart(void)
+{
+    ESP_LOGI(TAG, "platform_android_restart: requesting process restart via JNI");
+    display_android_request_restart();
+    /* display_android_request_restart calls back to Java which
+     * kills the process — we should never reach here, but if
+     * the JNI call fails silently, spin to avoid returning. */
+    for (;;) {
+        usleep(100000);
+    }
+}
+
 /* Forward declarations */
 extern int desktop_main_android(const char *data_dir);
 extern void claw_llm_http_arm_abort(volatile bool *flag);

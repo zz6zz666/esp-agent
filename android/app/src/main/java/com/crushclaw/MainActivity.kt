@@ -10,6 +10,7 @@ import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Process
 import android.provider.DocumentsContract
 import android.provider.Settings
 import android.util.Log
@@ -59,6 +60,14 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        val restartPrefs = getSharedPreferences("crushclaw_restart", MODE_PRIVATE)
+        if (restartPrefs.getBoolean("pending_restart", false)) {
+            restartPrefs.edit().putBoolean("pending_restart", false).apply()
+            finish()
+            return
+        }
+
         createLayout()
         applyInsets()
         maybeStartService()
@@ -203,7 +212,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun toggleService() {
         if (FloatingWindowService.isRunning) {
-            FloatingWindowService.stop(this)
+            Process.killProcess(Process.myPid())
         } else {
             maybeStartService()
         }

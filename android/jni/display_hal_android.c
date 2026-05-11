@@ -135,6 +135,8 @@ esp_err_t display_android_init_jni(JavaVM *jvm, jobject service_obj)
         "onFrameReady", "([BII)V");
     g_display_ctx.mid_on_display_enable = (*env)->GetMethodID(env, cls,
         "onDisplayEnable", "(Z)V");
+    g_display_ctx.mid_on_restart_requested = (*env)->GetMethodID(env, cls,
+        "onRestartRequested", "()V");
 
     (*env)->DeleteLocalRef(env, cls);
 
@@ -291,6 +293,30 @@ void display_android_notify_display_enable(bool enable)
 
     (*env)->CallVoidMethod(env, g_display_ctx.service_obj,
         g_display_ctx.mid_on_display_enable, (jboolean)enable);
+
+    if (need_detach) {
+        (*jvm)->DetachCurrentThread(jvm);
+    }
+}
+
+void display_android_request_restart(void)
+{
+    JNIEnv *env;
+    JavaVM *jvm = g_display_ctx.jvm;
+    if (!jvm || !g_display_ctx.service_obj) return;
+
+    bool need_detach = false;
+    int get_env = (*jvm)->GetEnv(jvm, (void**)&env, JNI_VERSION_1_6);
+    if (get_env == JNI_EDETACHED) {
+        if ((*jvm)->AttachCurrentThread(jvm, &env, NULL) != JNI_OK) return;
+        need_detach = true;
+    } else if (get_env != JNI_OK) {
+        return;
+    }
+
+    ESP_LOGI(TAG, "Requesting process restart via JNI callback");
+    (*env)->CallVoidMethod(env, g_display_ctx.service_obj,
+        g_display_ctx.mid_on_restart_requested);
 
     if (need_detach) {
         (*jvm)->DetachCurrentThread(jvm);

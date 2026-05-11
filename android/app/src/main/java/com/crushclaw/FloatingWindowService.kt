@@ -1,6 +1,7 @@
 package com.crushclaw
 
 import android.annotation.SuppressLint
+import android.app.AlarmManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -18,6 +19,8 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.Process
+import android.os.SystemClock
 import android.util.DisplayMetrics
 import android.util.Log
 import android.view.Gravity
@@ -119,6 +122,12 @@ class FloatingWindowService : Service() {
         createNotificationChannel()
         loadScaleFromConfig()
         loadWindowPosition()
+
+        val restartPrefs = getSharedPreferences("crushclaw_restart", MODE_PRIVATE)
+        if (restartPrefs.getBoolean("pending_restart", false)) {
+            restartPrefs.edit().putBoolean("pending_restart", false).apply()
+            Log.i(TAG, "Cleared pending restart flag")
+        }
 
         // Reset visibility state on fresh start
         emoteVisible = true
@@ -394,6 +403,41 @@ class FloatingWindowService : Service() {
                 mainHandler.post { hideWindow() }
             }
         }
+    }
+
+    /**
+     * Called from native when the agent requests a process restart.
+     * Sets a pending-restart flag, schedules service relaunch via
+     * AlarmManager, then kills the process. The system restarts the
+     * foreground service on its own, and MainActivity stays hidden
+     * (no UI popup) unless the user explicitly opens the launcher.
+     */
+    fun onRestartRequested() {
+        Log.i(TAG, "Restart requested from native — killing process")
+        val ctx = applicationContext
+
+        ctx.getSharedPreferences("crushclaw_restart", Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean("pending_restart", true)
+            .apply()
+
+        val intent = Intent(ctx, FloatingWindowService::class.java)
+        val flags = PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        val pendingIntent = PendingIntent.getForegroundService(ctx, 0, intent, flags)
+
+        val alarmManager = ctx.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val triggerAt = SystemClock.elapsedRealtime() + 200
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            alarmManager.setExactAndAllowWhileIdle(
+                AlarmManager.ELAPSED_REALTIME_WAKEUP, triggerAt, pendingIntent
+            )
+        } else {
+            alarmManager.setExact(
+                AlarmManager.ELAPSED_REALTIME_WAKEUP, triggerAt, pendingIntent
+            )
+        }
+
+        Process.killProcess(Process.myPid())
     }
 
     /**
