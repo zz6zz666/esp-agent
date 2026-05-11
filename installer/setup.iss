@@ -5,6 +5,29 @@
 #define MyAppExeName "crush-claw.exe"
 #define MyAgentExeName "esp-claw-desktop.exe"
 
+; Architecture-specific defines — override via ISCC /DARCH=amd64|x86|arm64
+#ifndef ARCH
+# define ARCH "amd64"
+#endif
+#if ARCH == "amd64"
+# define MARCH "amd64"
+# define SETUP_ARCH "x64compatible"
+# define BUILD_DIR "..\build"
+# define MINGW_PREFIX "C:\msys64\mingw64"
+#elif ARCH == "x86"
+# define MARCH "x86"
+# define SETUP_ARCH "x86"
+# define BUILD_DIR "..\build-x86"
+# define MINGW_PREFIX "C:\msys64\mingw32"
+#elif ARCH == "arm64"
+# define MARCH "arm64"
+# define SETUP_ARCH "arm64"
+# define BUILD_DIR "..\build-arm64"
+# define MINGW_PREFIX "C:\msys64\clangarm64"
+#else
+# error Unsupported ARCH (use amd64, x86, or arm64)
+#endif
+
 [Setup]
 AppId={{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}
 AppName={#MyAppName}
@@ -17,12 +40,12 @@ DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
 OutputDir=.
-OutputBaseFilename=crush-claw-setup-{#MyAppVersion}
+OutputBaseFilename=crush-claw-setup-{#MyAppVersion}-{#MARCH}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
-ArchitecturesAllowed=x64compatible
-ArchitecturesInstallIn64BitMode=x64compatible
+ArchitecturesAllowed={#SETUP_ARCH}
+ArchitecturesInstallIn64BitMode={#SETUP_ARCH}
 PrivilegesRequired=admin
 CloseApplications=no
 UsePreviousTasks=no
@@ -40,12 +63,12 @@ Name: "autoupdate"; Description: "Check for &updates on startup"; GroupDescripti
 
 [Files]
 ; Main binaries
-Source: "..\build\{#MyAgentExeName}"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\build\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#BUILD_DIR}\{#MyAgentExeName}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#BUILD_DIR}\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 
 ; SDL2 + SDL2_ttf
-Source: "C:\msys64\mingw64\bin\SDL2.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "C:\msys64\mingw64\bin\SDL2_ttf.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#MINGW_PREFIX}\bin\SDL2.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#MINGW_PREFIX}\bin\SDL2_ttf.dll"; DestDir: "{app}"; Flags: ignoreversion
 
 ; Fonts — bundled NotoColorEmoji.ttf replaces Windows Segoe UI Emoji
 Source: "..\fonts\NotoColorEmoji.ttf"; DestDir: "{app}\fonts"; Flags: ignoreversion
@@ -53,54 +76,68 @@ Source: "..\fonts\DejaVuSans.ttf"; DestDir: "{app}\fonts"; Flags: ignoreversion
 Source: "..\fonts\wqy-zenhei.ttc"; DestDir: "{app}\fonts"; Flags: ignoreversion
 
 ; Lua
-Source: "C:\msys64\mingw64\bin\lua54.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#MINGW_PREFIX}\bin\lua54.dll"; DestDir: "{app}"; Flags: ignoreversion
 
 ; libpng
-Source: "C:\msys64\mingw64\bin\libpng16-16.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#MINGW_PREFIX}\bin\libpng16-16.dll"; DestDir: "{app}"; Flags: ignoreversion
 
 ; libcurl + transitive deps
-Source: "C:\msys64\mingw64\bin\libcurl-4.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "C:\msys64\mingw64\bin\libidn2-0.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "C:\msys64\mingw64\bin\libssh2-1.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "C:\msys64\mingw64\bin\libnghttp2-14.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "C:\msys64\mingw64\bin\libzstd.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "C:\msys64\mingw64\bin\libbrotlidec.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "C:\msys64\mingw64\bin\libbrotlicommon.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "C:\msys64\mingw64\bin\libunistring-5.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "C:\msys64\mingw64\bin\libpsl-5.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#MINGW_PREFIX}\bin\libcurl-4.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#MINGW_PREFIX}\bin\libidn2-0.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#MINGW_PREFIX}\bin\libssh2-1.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#MINGW_PREFIX}\bin\libnghttp2-14.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#MINGW_PREFIX}\bin\libzstd.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#MINGW_PREFIX}\bin\libbrotlidec.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#MINGW_PREFIX}\bin\libbrotlicommon.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#MINGW_PREFIX}\bin\libunistring-5.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#MINGW_PREFIX}\bin\libpsl-5.dll"; DestDir: "{app}"; Flags: ignoreversion
 
 ; OpenSSL
-Source: "C:\msys64\mingw64\bin\libcrypto-3-x64.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "C:\msys64\mingw64\bin\libssl-3-x64.dll"; DestDir: "{app}"; Flags: ignoreversion
+#if ARCH == "amd64"
+Source: "{#MINGW_PREFIX}\bin\libcrypto-3-x64.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#MINGW_PREFIX}\bin\libssl-3-x64.dll"; DestDir: "{app}"; Flags: ignoreversion
+#elif ARCH == "arm64"
+Source: "{#MINGW_PREFIX}\bin\libcrypto-3-arm64.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#MINGW_PREFIX}\bin\libssl-3-arm64.dll"; DestDir: "{app}"; Flags: ignoreversion
+#else
+Source: "{#MINGW_PREFIX}\bin\libcrypto-3.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#MINGW_PREFIX}\bin\libssl-3.dll"; DestDir: "{app}"; Flags: ignoreversion
+#endif
 
 ; SDL2_ttf transitive deps: freetype, harfbuzz
-Source: "C:\msys64\mingw64\bin\libfreetype-6.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "C:\msys64\mingw64\bin\libharfbuzz-0.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "C:\msys64\mingw64\bin\libgraphite2.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "C:\msys64\mingw64\bin\libglib-2.0-0.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "C:\msys64\mingw64\bin\libpcre2-8-0.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "C:\msys64\mingw64\bin\libiconv-2.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "C:\msys64\mingw64\bin\libintl-8.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#MINGW_PREFIX}\bin\libfreetype-6.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#MINGW_PREFIX}\bin\libharfbuzz-0.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#MINGW_PREFIX}\bin\libgraphite2.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#MINGW_PREFIX}\bin\libglib-2.0-0.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#MINGW_PREFIX}\bin\libpcre2-8-0.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#MINGW_PREFIX}\bin\libiconv-2.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#MINGW_PREFIX}\bin\libintl-8.dll"; DestDir: "{app}"; Flags: ignoreversion
 
 ; Winpthreads (GCC runtime)
-Source: "C:\msys64\mingw64\bin\libwinpthread-1.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#MINGW_PREFIX}\bin\libwinpthread-1.dll"; DestDir: "{app}"; Flags: ignoreversion
 
 ; GCC runtime
-Source: "C:\msys64\mingw64\bin\libgcc_s_seh-1.dll"; DestDir: "{app}"; Flags: ignoreversion
+#if ARCH == "amd64"
+Source: "{#MINGW_PREFIX}\bin\libgcc_s_seh-1.dll"; DestDir: "{app}"; Flags: ignoreversion
+#elif ARCH == "x86"
+Source: "{#MINGW_PREFIX}\bin\libgcc_s_dw2-1.dll"; DestDir: "{app}"; Flags: ignoreversion
+#endif
+
+; GCC/libc++ runtime
+#if ARCH != "arm64"
+Source: "{#MINGW_PREFIX}\bin\libstdc++-6.dll"; DestDir: "{app}"; Flags: ignoreversion
+#endif
 
 ; zlib (transitive dep of many libraries)
-Source: "C:\msys64\mingw64\bin\zlib1.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#MINGW_PREFIX}\bin\zlib1.dll"; DestDir: "{app}"; Flags: ignoreversion
 
 ; bzip2 (transitive dep of freetype)
-Source: "C:\msys64\mingw64\bin\libbz2-1.dll"; DestDir: "{app}"; Flags: ignoreversion
-
-; GCC C++ runtime (needed by some C libraries)
-Source: "C:\msys64\mingw64\bin\libstdc++-6.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#MINGW_PREFIX}\bin\libbz2-1.dll"; DestDir: "{app}"; Flags: ignoreversion
 
 ; libcurl HTTP/3 & QUIC transitive deps
-Source: "C:\msys64\mingw64\bin\libnghttp3-9.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "C:\msys64\mingw64\bin\libngtcp2-16.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "C:\msys64\mingw64\bin\libngtcp2_crypto_ossl-0.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#MINGW_PREFIX}\bin\libnghttp3-9.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#MINGW_PREFIX}\bin\libngtcp2-16.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#MINGW_PREFIX}\bin\libngtcp2_crypto_ossl-0.dll"; DestDir: "{app}"; Flags: ignoreversion
 
 ; Emote engine assets (boot animation)
 Source: "..\sim_hal\assets\284_240\*"; DestDir: "{app}\assets\284_240"; Flags: ignoreversion recursesubdirs createallsubdirs

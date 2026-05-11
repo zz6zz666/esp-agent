@@ -389,7 +389,7 @@ if(WIN32)
     # Foreground terminal output still works via AttachConsole(ATTACH_PARENT_PROCESS).
     target_link_options(esp-claw-desktop PRIVATE -Wl,--subsystem,windows -Wl,--wrap,fclose)
 endif()
-if(WIN32)
+if(WIN32 AND NOT CROSS_AARCH64)
     target_sources(esp-claw-desktop PRIVATE ${CMAKE_SOURCE_DIR}/resources.rc)
 endif()
 
@@ -471,8 +471,10 @@ if(WIN32)
         ${CMAKE_SOURCE_DIR}/cli/crush_claw_cli.c
         ${SIM_HAL_DIR}/cJSON.c
         ${SIM_HAL_DIR}/platform_utils.c
-        ${CMAKE_SOURCE_DIR}/resources.rc
     )
+    if(NOT CROSS_AARCH64)
+        target_sources(crush-claw PRIVATE ${CMAKE_SOURCE_DIR}/resources.rc)
+    endif()
     target_include_directories(crush-claw PRIVATE
         ${SIM_INC_DIR}
         ${SIM_INC_DIR}/platform

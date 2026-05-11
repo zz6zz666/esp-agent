@@ -10,6 +10,8 @@
 #include <string.h>
 #include <time.h>
 
+#include <errno.h>
+
 #if defined(PLATFORM_WINDOWS)
 # define WIN32_LEAN_AND_MEAN
 # include <windows.h>
@@ -21,7 +23,6 @@
 # include <sys/types.h>
 # include <sys/wait.h>
 # include <unistd.h>
-# include <errno.h>
 #endif
 
 /* ---- restart state (captured at startup) ---- */
