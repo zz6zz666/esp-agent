@@ -1,0 +1,101 @@
+app-id: io.github.zz6zz666.crush-claw
+runtime: org.freedesktop.Platform
+runtime-version: '23.08'
+sdk: org.freedesktop.Sdk
+command: esp-claw-desktop
+finish-args:
+  - --share=ipc
+  - --share=network
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --socket=pulseaudio
+  - --device=dri
+  - --filesystem=~/.crush-claw:create
+  - --talk-name=org.freedesktop.Notifications
+modules:
+  - name: lua
+    buildsystem: simple
+    build-commands:
+      - make linux CC="gcc -std=gnu99 -fPIC" MYCFLAGS="-fPIC" MYLIBS="-Wl,-E -ldl"
+      - make install INSTALL_TOP=${FLATPAK_DEST} TO_LIB="liblua.a liblua.so liblua.so.5.4"
+    sources:
+      - type: archive
+        url: https://www.lua.org/ftp/lua-5.4.7.tar.gz
+        sha256: 9fbf5e28ef86c69858f6d3d34eccc32e911c1a28b4120ff3e84aaa70ecbf1e30
+
+  - name: json-c
+    buildsystem: cmake-ninja
+    builddir: true
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DBUILD_SHARED_LIBS=ON
+      - -DDISABLE_WERROR=ON
+    sources:
+      - type: archive
+        url: https://github.com/json-c/json-c/archive/refs/tags/json-c-0.17-20230812.tar.gz
+        sha256: 024d302a3aadcbf9f78735320a6d98a55c4afb53dff4f5b585afe3cd99f09e62
+
+  - name: SDL2
+    buildsystem: cmake-ninja
+    builddir: true
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DSDL_STATIC=OFF
+      - -DSDL_SHARED=ON
+      - -DSDL_TEST=OFF
+      - -DSDL_VIDEO_WAYLAND=ON
+      - -DSDL_VIDEO_X11=ON
+    sources:
+      - type: archive
+        url: https://github.com/libsdl-org/SDL/releases/download/release-2.30.12/SDL2-2.30.12.tar.gz
+        sha256: 3968d3b996fb1e7ef9e6712d42440c683435f6db73c9bbc85fae980c8f531af7
+
+  - name: SDL2_ttf
+    buildsystem: cmake-ninja
+    builddir: true
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DSDL2TTF_SAMPLES=OFF
+      - -DSDL2TTF_HARFBUZZ=ON
+    sources:
+      - type: archive
+        url: https://github.com/libsdl-org/SDL_ttf/releases/download/release-2.22.0/SDL2_ttf-2.22.0.tar.gz
+        sha256: ead3c1d85aa6e331da18769bc5da31aa8586f16f66c6ba72535159cbf52ab88f
+
+  - name: crush-claw
+    buildsystem: cmake-ninja
+    builddir: true
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DCMAKE_INSTALL_PREFIX=/app
+    post-install:
+      - install -Dm755 ../crush-claw /app/bin/crush-claw
+      - mkdir -p /app/share/crush-claw/defaults
+      - cp -r ../defaults/* /app/share/crush-claw/defaults/
+      - |
+        if [ -d ../sim_hal/assets/284_240 ]; then
+          mkdir -p /app/share/crush-claw/assets/284_240
+          cp -r ../sim_hal/assets/284_240/* /app/share/crush-claw/assets/284_240/
+        fi
+      - install -Dm644 ../installer/assets/lobster.svg /app/share/icons/hicolor/scalable/apps/io.github.zz6zz666.crush-claw.svg
+      - install -Dm644 ../installer/assets/lobster.png /app/share/icons/hicolor/256x256/apps/io.github.zz6zz666.crush-claw.png
+      - |
+        cat > /app/share/applications/io.github.zz6zz666.crush-claw.desktop << DESKTOPEOF
+        [Desktop Entry]
+        Type=Application
+        Version=1.1.0
+        Name=Crush Claw
+        GenericName=Desktop AI Agent
+        Comment=Desktop simulator for the esp-claw embedded AI agent framework
+        Exec=esp-claw-desktop --daemon
+        Icon=io.github.zz6zz666.crush-claw
+        Terminal=false
+        Categories=Utility;Development;
+        Keywords=AI;agent;desktop;simulator;LLM;
+        StartupNotify=false
+        DESKTOPEOF
+      - install -Dm644 ../README.md /app/share/doc/crush-claw/README.md
+      - install -Dm644 ../packaging/usr/lib/systemd/user/crush-claw.service /app/lib/systemd/user/crush-claw.service
+    sources:
+      - type: dir
+        path: .

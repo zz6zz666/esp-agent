@@ -1,0 +1,52 @@
+# Maintainer: Crush Claw team <zz6zz666@qq.com>
+# Contributor: Crush Claw project
+
+pkgname=crush-claw
+pkgver=1.1.0
+pkgrel=1
+pkgdesc="Desktop simulator for the esp-claw embedded AI agent framework"
+arch=('x86_64' 'i686' 'aarch64' 'armv7h')
+url="https://github.com/zz6zz666/crush-claw"
+license=('MIT')
+depends=('glibc>=2.34' 'curl>=7.81' 'lua>=5.4' 'sdl2>=2.0' 'sdl2_ttf'
+         'json-c>=0.15' 'libpng>=1.6' 'wqy-zenhei')
+optdepends=('noto-fonts-emoji: Color emoji support'
+            'gtk3>=3.24: System tray icon support'
+            'libayatana-appindicator: System tray indicator')
+makedepends=('cmake' 'gcc' 'make')
+install=crush-claw.install
+source=("${pkgname}-${pkgver}.tar.gz::https://github.com/zz6zz666/crush-claw/archive/refs/tags/v${pkgver}.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+  cd "${srcdir}/${pkgname}-${pkgver}"
+  git submodule update --init --recursive 2>/dev/null || true
+  cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
+  cmake --build build -- -j"$(nproc)"
+}
+
+package() {
+  cd "${srcdir}/${pkgname}-${pkgver}"
+
+  install -Dm755 build/esp-claw-desktop "${pkgdir}/usr/bin/esp-claw-desktop"
+  install -Dm755 crush-claw "${pkgdir}/usr/bin/crush-claw"
+
+  mkdir -p "${pkgdir}/usr/share/crush-claw/defaults"
+  cp -r defaults/* "${pkgdir}/usr/share/crush-claw/defaults/"
+
+  if [ -d "sim_hal/assets/284_240" ]; then
+    mkdir -p "${pkgdir}/usr/share/crush-claw/assets/284_240"
+    cp -r sim_hal/assets/284_240/* "${pkgdir}/usr/share/crush-claw/assets/284_240/"
+  fi
+
+  install -Dm644 installer/assets/lobster.svg \
+    "${pkgdir}/usr/share/icons/hicolor/scalable/apps/lobster.svg"
+  install -Dm644 installer/assets/lobster.png \
+    "${pkgdir}/usr/share/pixmaps/lobster.png"
+  install -Dm644 packaging/usr/share/applications/crush-claw.desktop \
+    "${pkgdir}/usr/share/applications/crush-claw.desktop"
+  install -Dm644 README.md \
+    "${pkgdir}/usr/share/doc/crush-claw/README.md"
+  install -Dm644 packaging/usr/lib/systemd/user/crush-claw.service \
+    "${pkgdir}/usr/lib/systemd/user/crush-claw.service"
+}

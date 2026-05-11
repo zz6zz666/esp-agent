@@ -1,0 +1,50 @@
+post_install() {
+  if [ -x /usr/bin/gtk-update-icon-cache ]; then
+    gtk-update-icon-cache -f -t /usr/share/icons/hicolor 2>/dev/null || true
+  fi
+  if [ -x /usr/bin/update-desktop-database ]; then
+    update-desktop-database -q /usr/share/applications 2>/dev/null || true
+  fi
+
+  cat << 'EOF'
+
+=== Crush Claw has been installed ===
+
+Quick start:
+  1. Run 'crush-claw config' to set up your LLM keys
+  2. Run 'crush-claw start' to launch the agent
+  3. Run 'crush-claw ask "Hello"' to interact with the agent
+
+Systemd user service (auto-start on login):
+  crush-claw service enable
+
+Data is stored in ~/.crush-claw/ (created on first run).
+EOF
+}
+
+post_upgrade() {
+  post_install
+}
+
+pre_remove() {
+  for pid_file in /home/*/.crush-claw/agent.pid; do
+    if [ -f "$pid_file" ]; then
+      pid=$(cat "$pid_file" 2>/dev/null || true)
+      if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+        echo "Stopping Crush Claw (PID $pid)..."
+        kill "$pid" 2>/dev/null || true
+        sleep 1
+        kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
+      fi
+      rm -f "$pid_file"
+    fi
+  done
+
+  for home in /home/*; do
+    user=$(basename "$home")
+    if id "$user" >/dev/null 2>&1; then
+      su - "$user" -c "systemctl --user stop crush-claw.service 2>/dev/null || true" 2>/dev/null || true
+      su - "$user" -c "systemctl --user disable crush-claw.service 2>/dev/null || true" 2>/dev/null || true
+    fi
+  done
+}

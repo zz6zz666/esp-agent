@@ -2,6 +2,11 @@
 build/
 build-*/
 *.deb
+*.rpm
+*.AppImage
+*.flatpak
+*.pkg.tar.*
+*.layer
 *.o
 *.a
 *.so

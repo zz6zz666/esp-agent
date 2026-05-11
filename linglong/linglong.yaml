@@ -1,0 +1,107 @@
+# yaml-language-server: $schema=https://linglong.dev/schema/linglong.yaml
+
+version: "1"
+
+package:
+  id: io.github.zz6zz666.crush-claw
+  name: crush-claw
+  version: 1.1.0
+  kind: app
+  description: |
+    Desktop simulator for the esp-claw embedded AI agent framework.
+    Crush Claw provides a complete Linux desktop test environment for
+    the esp-claw AI agent framework, requiring no ESP32 hardware.
+
+base: org.deepin.base/23.1.0
+runtime: org.deepin.Runtime/23.1.0
+
+# Runtime dependencies (apt install in build container)
+runtimeDependencies:
+  - libcurl4
+  - liblua5.4-0
+  - libsdl2-2.0-0
+  - libsdl2-ttf-2.0-0
+  - libjson-c5
+  - libpng16-16t64
+  - fonts-wqy-zenhei
+  - libgtk-3-0
+  - libayatana-appindicator3-1
+
+# Build dependencies
+buildDependencies:
+  - cmake
+  - gcc
+  - g++
+  - make
+  - pkg-config
+  - libcurl4-openssl-dev
+  - liblua5.4-dev
+  - libsdl2-dev
+  - libsdl2-ttf-dev
+  - libjson-c-dev
+  - libpng-dev
+
+# Source
+source:
+  kind: local
+  path: .
+
+# Build commands
+build: |
+  cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=${PREFIX}
+  cmake --build build -j$(nproc)
+
+# Install
+install: |
+  # Binary
+  install -Dm755 build/esp-claw-desktop ${PREFIX}/bin/esp-claw-desktop
+  install -Dm755 crush-claw ${PREFIX}/bin/crush-claw
+
+  # Data
+  mkdir -p ${PREFIX}/share/crush-claw/defaults
+  cp -r defaults/* ${PREFIX}/share/crush-claw/defaults/
+
+  if [ -d sim_hal/assets/284_240 ]; then
+    mkdir -p ${PREFIX}/share/crush-claw/assets/284_240
+    cp -r sim_hal/assets/284_240/* ${PREFIX}/share/crush-claw/assets/284_240/
+  fi
+
+  # Icons
+  install -Dm644 installer/assets/lobster.svg \
+    ${PREFIX}/share/icons/hicolor/scalable/apps/io.github.zz6zz666.crush-claw.svg
+  install -Dm644 installer/assets/lobster.png \
+    ${PREFIX}/share/icons/hicolor/256x256/apps/io.github.zz6zz666.crush-claw.png
+
+  # Desktop entry
+  mkdir -p ${PREFIX}/share/applications
+  install -Dm644 packaging/usr/share/applications/crush-claw.desktop \
+    ${PREFIX}/share/applications/io.github.zz6zz666.crush-claw.desktop
+  sed -i 's/Icon=lobster/Icon=io.github.zz6zz666.crush-claw/' \
+    ${PREFIX}/share/applications/io.github.zz6zz666.crush-claw.desktop
+
+  # Documentation
+  install -Dm644 README.md ${PREFIX}/share/doc/crush-claw/README.md
+
+  # Systemd user service
+  install -Dm644 packaging/usr/lib/systemd/user/crush-claw.service \
+    ${PREFIX}/lib/systemd/user/crush-claw.service
+
+# Permissions
+permissions:
+  - id: network
+    name: Network Access
+  - id: filesystem
+    name: File System Access
+    mountpoints:
+      - /home/${USER}/.crush-claw
+  - id: x11-socket
+    name: X11 Socket
+  - id: wayland-socket
+    name: Wayland Socket
+  - id: pulseaudio
+    name: PulseAudio
+
+commands:
+  - id: run
+    description: Start Crush Claw agent
+    command: /opt/apps/io.github.zz6zz666.crush-claw/files/bin/esp-claw-desktop
